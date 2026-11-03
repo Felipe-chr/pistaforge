@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PistaForge</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="/webui.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div class="brand-text">
+                <strong>PistaForge</strong>
+                <span>editor de pistas · M0</span>
+            </div>
+        </div>
+
+        <div class="toolbar" role="toolbar" aria-label="Ações">
+            <button id="ping" class="btn" disabled>Ping</button>
+            <button id="latency" class="btn" disabled>Medir latência</button>
+            <span class="toolbar-sep" aria-hidden="true"></span>
+            <button class="btn ghost" disabled title="Disponível no M2">Nova arena</button>
+            <button class="btn ghost" disabled title="Disponível no M2">Abrir</button>
+            <button class="btn ghost" disabled title="Disponível no M2">Salvar</button>
+        </div>
+
+        <div class="topbar-meta">
+            <span class="pill">C++23</span>
+            <span class="pill">MSVC</span>
+            <span class="pill">FastWebUI</span>
+        </div>
+    </header>
+
+    <aside class="sidebar left">
+        <section class="panel">
+            <h2>Biblioteca</h2>
+            <p class="hint">Curvas e cruzamentos chegam no M3.</p>
+
+            <div class="group">
+                <h3>Curvas</h3>
+                <button class="library-item" disabled>90°</button>
+                <button class="library-item" disabled>180°</button>
+                <button class="library-item" disabled>S-curve</button>
+            </div>
+
+            <div class="group">
+                <h3>Cruzamentos</h3>
+                <button class="library-item" disabled>Cruzamento 90°</button>
+            </div>
+
+            <div class="group">
+                <h3>Bézier</h3>
+                <button class="library-item" disabled>Curva livre</button>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Camadas</h2>
+            <label class="check"><input type="checkbox" checked disabled> Traçado</label>
+            <label class="check"><input type="checkbox" checked disabled> Marcadores</label>
+            <label class="check"><input type="checkbox" checked disabled> Anotações</label>
+            <label class="check"><input type="checkbox" disabled> Guias</label>
+        </section>
+    </aside>
+
+    <main class="workspace">
+        <canvas id="canvas" aria-label="Arena da pista"></canvas>
+        <div class="canvas-hint">
+            <strong>M0</strong>
+            <span>ponte C++ pronta · arena desenhada pelo núcleo</span>
+        </div>
+    </main>
+
+    <aside class="sidebar right">
+        <section class="panel">
+            <h2>Núcleo</h2>
+            <dl class="facts">
+                <div><dt>Versão</dt><dd id="core-version">—</dd></div>
+                <div><dt>Compilador</dt><dd id="core-compiler">—</dd></div>
+                <div><dt>Build</dt><dd id="core-build" class="mono">—</dd></div>
+            </dl>
+        </section>
+
+        <section class="panel">
+            <h2>Arena</h2>
+            <dl class="facts">
+                <div><dt>Dimensões</dt><dd id="arena-dims">—</dd></div>
+                <div><dt>Margem</dt><dd id="arena-margin">—</dd></div>
+                <div><dt>Escala</dt><dd>1:1</dd></div>
+            </dl>
+        </section>
+
+        <section class="panel">
+            <h2>Ponte</h2>
+            <dl class="facts">
+                <div><dt>Estado</dt><dd id="bridge-state" class="state pending">iniciando</dd></div>
+                <div><dt>Latência</dt><dd id="latency-result" class="mono">—</dd></div>
+            </dl>
+            <p class="hint">p50 / p95 de 100 chamadas JSON.</p>
+        </section>
+    </aside>
+
+    <footer class="statusbar">
+        <span id="status">Iniciando…</span>
+        <span class="status-right">
+            <span id="arena-status">—</span>
+            <span class="status-sep" aria-hidden="true"></span>
+            <span>mm · 1:1</span>
+        </span>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

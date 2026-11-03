@@ -1,0 +1,21 @@
+# Build
+/build/
+/out/
+/install/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeUserPresets.json
+
+# Frontend
+node_modules/
+src/web/dist/
+
+# Runtime
+*.pftrack
+*.pfsim.json
+*.log
+/scratch/
