@@ -6,16 +6,18 @@
 
 #include "app/bridge/api.hpp"
 #include "app/bridge/dispatcher.hpp"
+#include "app/bridge/state.hpp"
 
 using pf::Dispatcher;
 
 namespace {
 
-Dispatcher make_dispatcher() {
+struct Api {
+    pf::AppState state;
     Dispatcher dispatcher;
-    pf::register_api(dispatcher);
-    return dispatcher;
-}
+
+    Api() { pf::register_api(dispatcher, state); }
+};
 
 nlohmann::json call(const Dispatcher& dispatcher, std::string_view request) {
     return nlohmann::json::parse(dispatcher.handle(request));
@@ -24,8 +26,8 @@ nlohmann::json call(const Dispatcher& dispatcher, std::string_view request) {
 } // namespace
 
 TEST_CASE("Dispatcher: app.ping") {
-    const Dispatcher dispatcher = make_dispatcher();
-    const auto response = call(dispatcher, R"({"id":7,"method":"app.ping","params":{"v":3}})");
+    Api api;
+    const auto response = call(api.dispatcher, R"({"id":7,"method":"app.ping","params":{"v":3}})");
 
     CHECK(response["id"] == 7);
     CHECK(response["ok"].get<bool>());
@@ -34,8 +36,8 @@ TEST_CASE("Dispatcher: app.ping") {
 }
 
 TEST_CASE("Dispatcher: app.info") {
-    const Dispatcher dispatcher = make_dispatcher();
-    const auto response = call(dispatcher, R"({"id":1,"method":"app.info"})");
+    Api api;
+    const auto response = call(api.dispatcher, R"({"id":1,"method":"app.info"})");
 
     CHECK(response["ok"].get<bool>());
     CHECK(response["result"]["name"] == "PistaForge");
@@ -45,8 +47,8 @@ TEST_CASE("Dispatcher: app.info") {
 }
 
 TEST_CASE("Dispatcher: método desconhecido") {
-    const Dispatcher dispatcher = make_dispatcher();
-    const auto response = call(dispatcher, R"({"id":2,"method":"doc.new"})");
+    Api api;
+    const auto response = call(api.dispatcher, R"({"id":2,"method":"nao.existe"})");
 
     CHECK_FALSE(response["ok"].get<bool>());
     CHECK(response["error"]["code"] == "unknown_method");
@@ -54,24 +56,24 @@ TEST_CASE("Dispatcher: método desconhecido") {
 }
 
 TEST_CASE("Dispatcher: JSON inválido") {
-    const Dispatcher dispatcher = make_dispatcher();
-    const auto response = call(dispatcher, "{nao e json");
+    Api api;
+    const auto response = call(api.dispatcher, "{nao e json");
 
     CHECK_FALSE(response["ok"].get<bool>());
     CHECK(response["error"]["code"] == "parse_error");
 }
 
 TEST_CASE("Dispatcher: requisição não-objeto") {
-    const Dispatcher dispatcher = make_dispatcher();
-    const auto response = call(dispatcher, "[1,2,3]");
+    Api api;
+    const auto response = call(api.dispatcher, "[1,2,3]");
 
     CHECK_FALSE(response["ok"].get<bool>());
     CHECK(response["error"]["code"] == "invalid_request");
 }
 
 TEST_CASE("Dispatcher: método ausente") {
-    const Dispatcher dispatcher = make_dispatcher();
-    const auto response = call(dispatcher, R"({"id":9})");
+    Api api;
+    const auto response = call(api.dispatcher, R"({"id":9})");
 
     CHECK_FALSE(response["ok"].get<bool>());
     CHECK(response["error"]["code"] == "invalid_request");

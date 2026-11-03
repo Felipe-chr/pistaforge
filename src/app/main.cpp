@@ -1,6 +1,8 @@
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <numbers>
 #include <string>
 #include <string_view>
 
@@ -8,8 +10,12 @@
 
 #include "app/bridge/api.hpp"
 #include "app/bridge/dispatcher.hpp"
+#include "app/bridge/state.hpp"
 #include "app/shell/webui_shell.hpp"
 #include "core/geometry/bezier.hpp"
+#include "core/io/scene_json.hpp"
+#include "core/scene/scene.hpp"
+#include "core/scene/validation.hpp"
 
 #ifndef PF_VERSION
 #define PF_VERSION "0.0.0"
@@ -55,6 +61,69 @@ int run_selftest(pf::Dispatcher& dispatcher) {
     check(straight.flatten(0.01).size() >= 2, "flatten gera polilinha");
     check(std::abs(straight.bbox().width() - 100.0) < 1e-9, "bbox da Bézier reta");
 
+    const Json fresh = call(
+        R"({"id":10,"method":"doc.new","params":{"arena":{"name":"Selftest","width":3000,"height":2000}}})");
+    check(fresh["ok"].get<bool>(), "doc.new responde ok");
+    check(fresh["result"]["arena"]["width"] == 3000.0, "doc.new aplica a arena");
+    check(fresh["result"]["arena"]["name"] == "Selftest", "doc.new aplica o nome da arena");
+
+    const Json line = call(
+        R"({"id":11,"method":"doc.addLine","params":{"a":[100,100],"b":[900,100]}})");
+    check(line["ok"].get<bool>(), "doc.addLine responde ok");
+    const auto line_id = line["result"]["id"].get<std::uint64_t>();
+
+    const Json arc = call(
+        R"({"id":12,"method":"doc.addArc","params":{"center":[900,400],"radius":300,"start_deg":-90,"sweep_deg":90}})");
+    check(arc["ok"].get<bool>(), "doc.addArc responde ok");
+    const auto arc_id = arc["result"]["id"].get<std::uint64_t>();
+
+    const Json connect_request{
+        {"id", 13},
+        {"method", "doc.connect"},
+        {"params",
+         {
+             {"a", Json::array({line_id, "end"})},
+             {"b", Json::array({arc_id, "start"})},
+         }},
+    };
+    const std::string connect_text = connect_request.dump();
+    const Json connection = call(connect_text);
+    check(connection["ok"].get<bool>(), "doc.connect responde ok");
+
+    const Json validation = call(R"({"id":14,"method":"scene.validate"})");
+    check(validation["ok"].get<bool>(), "scene.validate responde ok");
+    bool has_error = false;
+    for (const Json& diagnostic : validation["result"]) {
+        if (diagnostic["severity"] == "error") has_error = true;
+    }
+    check(!has_error, "documento conectado sem erros de validação");
+
+    const Json ports = call(R"({"id":15,"method":"scene.ports"})");
+    check(ports["ok"].get<bool>(), "scene.ports responde ok");
+    check(ports["result"].size() == 4, "scene.ports devolve as quatro portas");
+
+    pf::Scene scene;
+    scene.arena.name = "Round-trip";
+    const pf::ElementId sample_line =
+        scene.add_element(pf::LineSegment{{100.0, 100.0}, {900.0, 100.0}}).id;
+    const pf::ElementId sample_arc = scene.add_element(
+        pf::ArcSegment{{900.0, 400.0}, 300.0, -std::numbers::pi / 2.0, std::numbers::pi / 2.0}).id;
+    scene.add_connection(pf::PortRef{sample_line, "end"}, pf::PortRef{sample_arc, "start"});
+
+    const std::string document_text = pf::io::to_string(scene);
+    const pf::Scene restored = pf::io::from_string(document_text);
+    check(restored.elements.size() == scene.elements.size(), "round-trip preserva elementos");
+    check(restored.connections.size() == scene.connections.size(),
+          "round-trip preserva conexões");
+    check(restored.next_id == scene.next_id, "round-trip preserva next_id");
+
+    const std::vector<pf::Diagnostic> diagnostics = pf::validate_scene(restored);
+    bool round_trip_error = false;
+    for (const pf::Diagnostic& diagnostic : diagnostics) {
+        if (diagnostic.severity == pf::Severity::Error) round_trip_error = true;
+    }
+    check(!round_trip_error, "round-trip sem erros de validação");
+
     std::cout << (failures == 0 ? "selftest: OK\n" : "selftest: FALHOU\n");
     return failures == 0 ? 0 : 1;
 }
@@ -74,8 +143,9 @@ int main(int argc, char** argv) {
         }
     }
 
+    pf::AppState state;
     pf::Dispatcher dispatcher;
-    pf::register_api(dispatcher);
+    pf::register_api(dispatcher, state);
 
     if (selftest) return run_selftest(dispatcher);
 

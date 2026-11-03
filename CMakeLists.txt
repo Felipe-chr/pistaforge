@@ -22,12 +22,20 @@ set(WEBUI_USE_TLS OFF CACHE BOOL "" FORCE)
 add_subdirectory(vendor/FastWebUI EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------------------
-# Core (no UI, no third-party dependencies)
+# Core (no UI; depends only on the header-only JSON library)
 # ---------------------------------------------------------------------------
 add_library(pf_core STATIC
     src/core/geometry/bezier.cpp
+    src/core/geometry/line.cpp
+    src/core/geometry/arc.cpp
+    src/core/geometry/index.cpp
+    src/core/scene/module.cpp
+    src/core/scene/element.cpp
+    src/core/scene/scene.cpp
+    src/core/scene/validation.cpp
+    src/core/io/scene_json.cpp
 )
-target_include_directories(pf_core PUBLIC src)
+target_include_directories(pf_core PUBLIC src vendor)
 target_compile_options(pf_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4>)
 
 # ---------------------------------------------------------------------------
@@ -35,6 +43,7 @@ target_compile_options(pf_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4>)
 # ---------------------------------------------------------------------------
 add_library(pf_bridge STATIC
     src/app/bridge/api.cpp
+    src/app/bridge/api_doc.cpp
     src/app/bridge/dispatcher.cpp
 )
 target_include_directories(pf_bridge PUBLIC src)
@@ -77,7 +86,13 @@ add_executable(pf_tests
     tests/test_main.cpp
     tests/test_vec2.cpp
     tests/test_bezier.cpp
+    tests/test_line.cpp
+    tests/test_arc.cpp
+    tests/test_index.cpp
+    tests/test_scene.cpp
+    tests/test_scene_json.cpp
     tests/test_dispatcher.cpp
+    tests/test_api_doc.cpp
 )
 target_link_libraries(pf_tests PRIVATE pf_bridge)
 target_include_directories(pf_tests PRIVATE vendor)

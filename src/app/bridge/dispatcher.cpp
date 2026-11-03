@@ -3,6 +3,8 @@
 #include <exception>
 #include <utility>
 
+#include "app/bridge/error.hpp"
+
 namespace pf {
 namespace {
 
@@ -58,6 +60,8 @@ std::string Dispatcher::handle(std::string_view request) const {
         return make_error(id, "parse_error", error.what()).dump();
     } catch (const Json::type_error& error) {
         return make_error(id, "type_error", error.what()).dump();
+    } catch (const ApiError& error) {
+        return make_error(id, error.code(), error.what()).dump();
     } catch (const std::exception& error) {
         return make_error(id, "internal_error", error.what()).dump();
     } catch (...) {

@@ -9,17 +9,48 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 - **Impressão:** SVG 1:1 em mm, mosaico de páginas
 - **Simulação:** exportação JSON versionada (simulador virá depois)
 
-## Estado atual — M0
+## Estado atual — M1
 
 - [x] Repositório, CMake, presets MSVC
 - [x] FastWebUI vendorizado e linkado como biblioteca estática
 - [x] Ponte JSON `app_call` (dispatcher com erros estruturados)
 - [x] Shell mínimo com janela, `index.html` e canvas da arena
-- [x] Núcleo geométrico: `Vec2`, `CubicBezier` (eval, derivadas, curvatura, split,
-      bbox, comprimento, flatten, ponto mais próximo)
-- [x] Testes com doctest e alvo `pf_tests`
+- [x] Núcleo geométrico: `Vec2`, `BBox`, `CubicBezier`, `LineSegment`,
+      `ArcSegment` e índice espacial em grid uniforme
+- [x] Modelo de cena: arena, elementos (linha/Bézier/arco/módulo), portas,
+      conexões, marcadores, guias e camadas
+- [x] Validação: arena, schema, formas degeneradas, templates, portas,
+      fechamento (0,01 mm), alinhamento (0,1°) e conexões duplicadas
+- [x] Documento `.pftrack` (schema 1) com round-trip JSON completo
+- [x] API de documento/cena (`doc.*`, `scene.*`)
+- [x] Testes com doctest e alvo `pf_tests` — 61 casos / 1269 asserções
+- [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
-- [ ] Arena, elementos e conexões (M1)
+- [ ] Editor MVP com canvas interativo (M2)
+
+### API de documento e cena
+
+| Método | Entrada | Saída |
+|--------|---------|-------|
+| `doc.new` | `{arena?}` | resumo do documento |
+| `doc.state` | `{}` | documento `.pftrack` + `path` |
+| `doc.load` | `{path}` | resumo do documento |
+| `doc.save` | `{path?}` | `{path, rev}` |
+| `doc.addLine` | `{a,b,width?,layer?}` | `{id,rev}` |
+| `doc.addCubic` | `{p0,p1,p2,p3,width?,layer?}` | `{id,rev}` |
+| `doc.addArc` | `{center,radius,start_deg?,sweep_deg?,width?,layer?}` | `{id,rev}` |
+| `doc.addModule` | `{template,params?,transform?,width?,layer?}` | `{id,rev}` |
+| `doc.removeElement` | `{id}` | `{rev,removed}` |
+| `doc.connect` | `{a:[id,port],b:[id,port]}` | `{id,rev}` |
+| `doc.disconnect` | `{id}` | `{rev,removed}` |
+| `doc.addMarker` | `{type,x,y,angle_deg?,text?}` | `{id,rev}` |
+| `doc.setArena` | `{name?,width?,height?,margin?}` | `{rev,arena}` |
+| `scene.ports` | `{}` | lista de portas |
+| `scene.pick` | `{point,tolerance?}` | `{element,port,t,distance,point}` |
+| `scene.validate` | `{}` | diagnósticos |
+| `scene.bounds` | `{}` | bbox da cena (inclui largura da faixa) |
+
+Ângulos são gravados em **graus** no JSON e usados em **radianos** no núcleo.
 
 ## Build
 
@@ -82,7 +113,9 @@ Autoteste do núcleo e da ponte, sem abrir janela:
 ## Estrutura
 
 ```
-src/core/geometry/   Vec2, BBox, CubicBezier
+src/core/geometry/   Vec2, BBox, CubicBezier, LineSegment, ArcSegment, SpatialIndex
+src/core/scene/      Arena, Element, ModuleInstance, Scene, validação
+src/core/io/         Documento `.pftrack` (JSON schema 1)
 src/app/bridge/      Dispatcher JSON + métodos da API
 src/app/shell/       IShell/WebUiShell (FastWebUI)
 src/web/             index.html, styles.css, app.js

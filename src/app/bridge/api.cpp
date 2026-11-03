@@ -2,7 +2,9 @@
 
 #include <string>
 
+#include "app/bridge/api_doc.hpp"
 #include "app/bridge/dispatcher.hpp"
+#include "app/bridge/state.hpp"
 
 #ifndef PF_VERSION
 #define PF_VERSION "0.0.0"
@@ -25,7 +27,7 @@ std::string compiler_string() {
 
 } // namespace
 
-void register_api(Dispatcher& dispatcher) {
+void register_api(Dispatcher& dispatcher, AppState& state) {
     using Json = Dispatcher::Json;
 
     dispatcher.add("app.ping", [](const Json& params) {
@@ -35,7 +37,7 @@ void register_api(Dispatcher& dispatcher) {
         };
     });
 
-    dispatcher.add("app.info", [](const Json&) {
+    dispatcher.add("app.info", [&state](const Json&) {
         return Json{
             {"name", "PistaForge"},
             {"version", PF_VERSION},
@@ -46,15 +48,18 @@ void register_api(Dispatcher& dispatcher) {
             {"sim_schema", 1},
             {"arena",
              {
-                 {"width", 4000.0},
-                 {"height", 3000.0},
-                 {"margin", 100.0},
+                 {"width", state.scene.arena.width_mm},
+                 {"height", state.scene.arena.height_mm},
+                 {"margin", state.scene.arena.margin_mm},
              }},
-            {"capabilities", Json::array({"bridge", "geometry"})},
+            {"capabilities",
+             Json::array({"bridge", "geometry", "scene", "io"})},
         };
     });
 
     dispatcher.add("app.echo", [](const Json& params) { return params; });
+
+    register_doc_api(dispatcher, state);
 }
 
 } // namespace pf
