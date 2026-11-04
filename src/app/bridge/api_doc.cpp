@@ -163,6 +163,15 @@ Json arena_json(const Arena& arena) {
     };
 }
 
+Json layers_json(const LayerVisibility& layers) {
+    return Json{
+        {"track", layers.track},
+        {"markers", layers.markers},
+        {"annotations", layers.annotations},
+        {"guides", layers.guides},
+    };
+}
+
 void apply_arena(Arena& arena, const Json& value) {
     if (!value.is_object()) {
         fail("invalid_params", "Campo 'arena' deve ser um objeto.");
@@ -332,8 +341,10 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         const ArcSegment arc{
             .center = point_param(params, "center"),
             .radius = number_param(params, "radius"),
-            .start_angle = number_or(params, "start_deg", 0.0) * kDegToRad,
-            .sweep_angle = number_or(params, "sweep_deg", 90.0) * kDegToRad,
+            .start_angle =
+                number_or(params, "start", number_or(params, "start_deg", 0.0)) * kDegToRad,
+            .sweep_angle =
+                number_or(params, "sweep", number_or(params, "sweep_deg", 90.0)) * kDegToRad,
         };
         if (!arc.is_valid()) {
             fail("invalid_params", "Arco com raio ou varredura inválidos.");
@@ -382,7 +393,8 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                 transform.value("tx", 0.0),
                 transform.value("ty", 0.0),
             };
-            module.transform.rotation = transform.value("rot_deg", 0.0) * kDegToRad;
+            module.transform.rotation =
+                transform.value("rot", transform.value("rot_deg", 0.0)) * kDegToRad;
             module.transform.mirrored = transform.value("mirrored", false);
         }
 
@@ -454,7 +466,8 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         marker.id = state.scene.allocate_id();
         marker.type = type;
         marker.position = {number_or(params, "x", 0.0), number_or(params, "y", 0.0)};
-        marker.angle = number_or(params, "angle_deg", 0.0) * kDegToRad;
+        marker.angle =
+            number_or(params, "angle", number_or(params, "angle_deg", 0.0)) * kDegToRad;
         marker.text = params.value("text", std::string{});
         const MarkerId id = marker.id;
         state.scene.markers.push_back(std::move(marker));
@@ -469,6 +482,26 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         commit_change(state);
         return Json{{"rev", state.scene.revision},
                     {"arena", arena_json(state.scene.arena)}};
+    });
+
+    dispatcher.add("doc.setLayers", [&state](const Json& params) {
+        require_object(params);
+        const auto apply = [&params](std::string_view key, bool& target) {
+            const auto it = params.find(std::string{key});
+            if (it == params.end()) return;
+            if (!it->is_boolean()) {
+                fail("invalid_params",
+                     "Campo '" + std::string{key} + "' deve ser booleano.");
+            }
+            target = it->get<bool>();
+        };
+        apply("track", state.scene.layers.track);
+        apply("markers", state.scene.layers.markers);
+        apply("annotations", state.scene.layers.annotations);
+        apply("guides", state.scene.layers.guides);
+        commit_change(state);
+        return Json{{"rev", state.scene.revision},
+                    {"layers", layers_json(state.scene.layers)}};
     });
 
     dispatcher.add("scene.ports", [&state](const Json&) {

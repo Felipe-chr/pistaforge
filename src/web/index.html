@@ -13,17 +13,13 @@
             <span class="brand-mark" aria-hidden="true"></span>
             <div class="brand-text">
                 <strong>PistaForge</strong>
-                <span>editor de pistas · M0</span>
+                <span>editor de pistas · M1</span>
             </div>
         </div>
 
-        <div class="toolbar" role="toolbar" aria-label="Ações">
-            <button id="ping" class="btn" disabled>Ping</button>
-            <button id="latency" class="btn" disabled>Medir latência</button>
-            <span class="toolbar-sep" aria-hidden="true"></span>
-            <button class="btn ghost" disabled title="Disponível no M2">Nova arena</button>
-            <button class="btn ghost" disabled title="Disponível no M2">Abrir</button>
-            <button class="btn ghost" disabled title="Disponível no M2">Salvar</button>
+        <div class="topbar-actions">
+            <button id="ping" class="btn" data-action="ping" disabled>Ping</button>
+            <button id="latency" class="btn" data-action="latency" disabled>Medir latência</button>
         </div>
 
         <div class="topbar-meta">
@@ -33,43 +29,238 @@
         </div>
     </header>
 
+    <section class="ribbon" aria-label="Faixa de ferramentas">
+        <nav class="ribbon-tabs" role="tablist" aria-label="Abas da faixa">
+            <button class="ribbon-tab active" role="tab" data-tab="insert" aria-selected="true">Inserir</button>
+            <button class="ribbon-tab" role="tab" data-tab="document" aria-selected="false">Documento</button>
+            <button class="ribbon-tab" role="tab" data-tab="view" aria-selected="false">Exibir</button>
+        </nav>
+
+        <div class="ribbon-panels">
+            <div class="ribbon-panel active" data-panel="insert" role="tabpanel">
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="insert-line" title="Inserir uma reta">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M8 32 L56 8"/>
+                                <circle cx="8" cy="32" r="2.4" fill="currentColor"/>
+                                <circle cx="56" cy="8" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>Linha</span>
+                        </button>
+                        <button class="ribbon-button" data-action="insert-bezier" title="Inserir uma Bézier livre">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M8 30 C 20 6, 44 34, 56 10"/>
+                                <path d="M8 30 L20 6 M56 10 L44 34" stroke-dasharray="3 3" opacity="0.45"/>
+                                <circle cx="8" cy="30" r="2.4" fill="currentColor"/>
+                                <circle cx="56" cy="10" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>Bézier</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Formas</div>
+                </div>
+
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="insert-arc90" title="Inserir arco de 90°">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M10 32 A 24 24 0 0 1 34 8"/>
+                                <circle cx="10" cy="32" r="2.4" fill="currentColor"/>
+                                <circle cx="34" cy="8" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>Arco 90°</span>
+                        </button>
+                        <button class="ribbon-button" data-action="insert-curve90" title="Inserir módulo de curva 90°">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M10 34 A 26 26 0 0 1 36 8" stroke-width="7" opacity="0.22"/>
+                                <path d="M10 34 A 26 26 0 0 1 36 8"/>
+                                <circle cx="10" cy="34" r="2.4" fill="currentColor"/>
+                                <circle cx="36" cy="8" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>Curva 90°</span>
+                        </button>
+                        <button class="ribbon-button" data-action="insert-arc180" title="Inserir curva de 180°">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M12 32 A 20 20 0 0 1 52 32"/>
+                                <circle cx="12" cy="32" r="2.4" fill="currentColor"/>
+                                <circle cx="52" cy="32" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>180°</span>
+                        </button>
+                        <button class="ribbon-button" data-action="insert-s" title="Inserir curva em S">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M8 30 C 22 30, 18 10, 32 10 S 46 30, 56 10"/>
+                            </svg>
+                            <span>Curva S</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Curvas</div>
+                </div>
+
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="insert-cross" title="Inserir cruzamento 90°">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M8 20 H56 M32 4 V36"/>
+                                <rect x="25" y="13" width="14" height="14" rx="2" fill="none"/>
+                            </svg>
+                            <span>Cruzamento</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Cruzamentos</div>
+                </div>
+
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="undo" title="Desfazer a última inserção">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M18 30 C 18 14, 48 14, 48 26"/>
+                                <path d="M12 24 L18 30 L24 24"/>
+                            </svg>
+                            <span>Desfazer</span>
+                        </button>
+                        <button class="ribbon-button" data-action="new" title="Começar um documento novo">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M16 8 H40 L48 16 V34 H16 Z"/>
+                                <path d="M40 8 V16 H48"/>
+                                <path d="M24 24 H40 M32 16 V32"/>
+                            </svg>
+                            <span>Limpar</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Edição</div>
+                </div>
+            </div>
+
+            <div class="ribbon-panel" data-panel="document" role="tabpanel">
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="new" title="Novo documento">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M16 8 H40 L48 16 V34 H16 Z"/>
+                                <path d="M40 8 V16 H48"/>
+                            </svg>
+                            <span>Novo</span>
+                        </button>
+                        <button class="ribbon-button" data-action="open" title="Abrir um .pftrack">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M10 14 H26 L32 20 H54 V34 H10 Z"/>
+                                <path d="M10 20 H54"/>
+                            </svg>
+                            <span>Abrir</span>
+                        </button>
+                        <button class="ribbon-button" data-action="save" title="Salvar um .pftrack">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M14 8 H44 L50 14 V34 H14 Z"/>
+                                <path d="M22 8 V18 H40 V8"/>
+                                <path d="M22 34 V24 H42 V34"/>
+                            </svg>
+                            <span>Salvar</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Arquivo</div>
+                </div>
+
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="arena-default" title="Nova arena 4 × 3 m">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <rect x="12" y="8" width="40" height="26" rx="2"/>
+                                <path d="M12 20 H52 M32 8 V34" stroke-dasharray="2 3" opacity="0.6"/>
+                            </svg>
+                            <span>4 × 3 m</span>
+                        </button>
+                        <button class="ribbon-button" data-action="arena-3x4" title="Nova arena 3 × 4 m">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <rect x="18" y="6" width="28" height="30" rx="2"/>
+                                <path d="M18 21 H46 M32 6 V36" stroke-dasharray="2 3" opacity="0.6"/>
+                            </svg>
+                            <span>3 × 4 m</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Arena</div>
+                </div>
+            </div>
+
+            <div class="ribbon-panel" data-panel="view" role="tabpanel">
+                <div class="ribbon-group">
+                    <div class="ribbon-items ribbon-items-column">
+                        <label class="ribbon-check"><input class="layer-toggle" data-layer="track" type="checkbox" checked> Traçado</label>
+                        <label class="ribbon-check"><input class="layer-toggle" data-layer="markers" type="checkbox" checked> Marcadores</label>
+                        <label class="ribbon-check"><input class="layer-toggle" data-layer="annotations" type="checkbox" checked> Anotações</label>
+                        <label class="ribbon-check"><input class="layer-toggle" data-layer="guides" type="checkbox"> Guias</label>
+                    </div>
+                    <div class="ribbon-group-title">Camadas</div>
+                </div>
+
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="ping" title="Testar a ponte">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M16 30 A 22 22 0 0 1 48 30" opacity="0.35"/>
+                                <path d="M22 30 A 16 16 0 0 1 42 30"/>
+                                <circle cx="32" cy="30" r="2.5" fill="currentColor"/>
+                            </svg>
+                            <span>Ping</span>
+                        </button>
+                        <button class="ribbon-button" data-action="latency" title="Medir p50 / p95">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <circle cx="32" cy="23" r="12"/>
+                                <path d="M32 23 V16 M32 11 V7 M26 7 H38"/>
+                            </svg>
+                            <span>Latência</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Ponte</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <aside class="sidebar left">
         <section class="panel">
             <h2>Biblioteca</h2>
-            <p class="hint">Curvas e cruzamentos chegam no M3.</p>
+            <p class="hint">Clique para inserir no cursor. Os mesmos comandos estão na faixa <strong>Inserir</strong>.</p>
 
             <div class="group">
                 <h3>Curvas</h3>
-                <button class="library-item" disabled>90°</button>
-                <button class="library-item" disabled>180°</button>
-                <button class="library-item" disabled>S-curve</button>
+                <button class="library-item" data-action="insert-arc90">Arco 90°</button>
+                <button class="library-item" data-action="insert-curve90">Curva 90°</button>
+                <button class="library-item" data-action="insert-arc180">Curva 180°</button>
+                <button class="library-item" data-action="insert-s">Curva S</button>
             </div>
 
             <div class="group">
                 <h3>Cruzamentos</h3>
-                <button class="library-item" disabled>Cruzamento 90°</button>
+                <button class="library-item" data-action="insert-cross">Cruzamento 90°</button>
             </div>
 
             <div class="group">
                 <h3>Bézier</h3>
-                <button class="library-item" disabled>Curva livre</button>
+                <button class="library-item" data-action="insert-bezier">Curva livre</button>
+            </div>
+
+            <div class="group">
+                <h3>Reta</h3>
+                <button class="library-item" data-action="insert-line">Linha</button>
             </div>
         </section>
 
         <section class="panel">
             <h2>Camadas</h2>
-            <label class="check"><input type="checkbox" checked disabled> Traçado</label>
-            <label class="check"><input type="checkbox" checked disabled> Marcadores</label>
-            <label class="check"><input type="checkbox" checked disabled> Anotações</label>
-            <label class="check"><input type="checkbox" disabled> Guias</label>
+            <label class="check"><input class="layer-toggle" data-layer="track" type="checkbox" checked> Traçado</label>
+            <label class="check"><input class="layer-toggle" data-layer="markers" type="checkbox" checked> Marcadores</label>
+            <label class="check"><input class="layer-toggle" data-layer="annotations" type="checkbox" checked> Anotações</label>
+            <label class="check"><input class="layer-toggle" data-layer="guides" type="checkbox"> Guias</label>
         </section>
     </aside>
 
     <main class="workspace">
         <canvas id="canvas" aria-label="Arena da pista"></canvas>
         <div class="canvas-hint">
-            <strong>M0</strong>
-            <span>ponte C++ pronta · arena desenhada pelo núcleo</span>
+            <strong>M1 · inserção</strong>
+            <span>clique em uma curva na faixa para desenhar</span>
         </div>
     </main>
 
@@ -80,6 +271,16 @@
                 <div><dt>Versão</dt><dd id="core-version">—</dd></div>
                 <div><dt>Compilador</dt><dd id="core-compiler">—</dd></div>
                 <div><dt>Build</dt><dd id="core-build" class="mono">—</dd></div>
+            </dl>
+        </section>
+
+        <section class="panel">
+            <h2>Documento</h2>
+            <dl class="facts">
+                <div><dt>Elementos</dt><dd id="doc-elements">0</dd></div>
+                <div><dt>Conexões</dt><dd id="doc-connections">0</dd></div>
+                <div><dt>Revisão</dt><dd id="doc-revision">0</dd></div>
+                <div><dt>Cursor</dt><dd id="doc-cursor" class="mono">300, 300</dd></div>
             </dl>
         </section>
 
@@ -110,6 +311,18 @@
             <span>mm · 1:1</span>
         </span>
     </footer>
+
+    <dialog id="path-dialog" class="path-dialog">
+        <form method="dialog">
+            <h2 id="path-dialog-title">Salvar documento</h2>
+            <label for="path-input">Caminho do arquivo</label>
+            <input id="path-input" type="text" spellcheck="false" autocomplete="off">
+            <div class="dialog-actions">
+                <button value="ok" class="btn primary">OK</button>
+                <button value="cancel" class="btn ghost">Cancelar</button>
+            </div>
+        </form>
+    </dialog>
 
     <script src="app.js"></script>
 </body>

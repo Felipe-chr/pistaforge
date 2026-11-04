@@ -308,6 +308,27 @@ TEST_CASE("API: arena e marcadores") {
     CHECK(state["result"]["markers"][0]["text"] == "largada");
 }
 
+TEST_CASE("API: visibilidade de camadas") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const json changed = api.call(
+        R"({"id":2,"method":"doc.setLayers","params":{"track":false,"guides":true}})");
+    REQUIRE(changed["ok"].get<bool>());
+    CHECK_FALSE(changed["result"]["layers"]["track"].get<bool>());
+    CHECK(changed["result"]["layers"]["guides"].get<bool>());
+    CHECK(changed["result"]["layers"]["markers"].get<bool>());
+
+    const json state = api.call(R"({"id":3,"method":"doc.state"})");
+    CHECK_FALSE(state["result"]["layers"]["track"].get<bool>());
+    CHECK(state["result"]["layers"]["guides"].get<bool>());
+
+    const json invalid =
+        api.call(R"({"id":4,"method":"doc.setLayers","params":{"track":"nao"}})");
+    CHECK_FALSE(invalid["ok"].get<bool>());
+    CHECK(invalid["error"]["code"] == "invalid_params");
+}
+
 TEST_CASE("API: erros de criação de elementos") {
     Api api;
     api.call(R"({"id":1,"method":"doc.new"})");

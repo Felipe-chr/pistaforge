@@ -23,7 +23,11 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
       fechamento (0,01 mm), alinhamento (0,1°) e conexões duplicadas
 - [x] Documento `.pftrack` (schema 1) com round-trip JSON completo
 - [x] API de documento/cena (`doc.*`, `scene.*`)
-- [x] Testes com doctest e alvo `pf_tests` — 61 casos / 1269 asserções
+- [x] Interface com faixa estilo Office (abas **Inserir**, **Documento** e
+      **Exibir**), ícones SVG de curvas e inserção real de elementos
+- [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo de
+      caminho para salvar/abrir
+- [x] Testes com doctest e alvo `pf_tests` — 63 casos / 1287 asserções
 - [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
 - [ ] Editor MVP com canvas interativo (M2)
@@ -38,19 +42,45 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.save` | `{path?}` | `{path, rev}` |
 | `doc.addLine` | `{a,b,width?,layer?}` | `{id,rev}` |
 | `doc.addCubic` | `{p0,p1,p2,p3,width?,layer?}` | `{id,rev}` |
-| `doc.addArc` | `{center,radius,start_deg?,sweep_deg?,width?,layer?}` | `{id,rev}` |
+| `doc.addArc` | `{center,radius,start?,sweep?,width?,layer?}` | `{id,rev}` |
 | `doc.addModule` | `{template,params?,transform?,width?,layer?}` | `{id,rev}` |
 | `doc.removeElement` | `{id}` | `{rev,removed}` |
 | `doc.connect` | `{a:[id,port],b:[id,port]}` | `{id,rev}` |
 | `doc.disconnect` | `{id}` | `{rev,removed}` |
-| `doc.addMarker` | `{type,x,y,angle_deg?,text?}` | `{id,rev}` |
+| `doc.addMarker` | `{type,x,y,angle?,text?}` | `{id,rev}` |
 | `doc.setArena` | `{name?,width?,height?,margin?}` | `{rev,arena}` |
+| `doc.setLayers` | `{track?,markers?,annotations?,guides?}` | `{layers,rev}` |
 | `scene.ports` | `{}` | lista de portas |
 | `scene.pick` | `{point,tolerance?}` | `{element,port,t,distance,point}` |
 | `scene.validate` | `{}` | diagnósticos |
 | `scene.bounds` | `{}` | bbox da cena (inclui largura da faixa) |
 
-Ângulos são gravados em **graus** no JSON e usados em **radianos** no núcleo.
+Ângulos são gravados em **graus** no JSON (`start`/`sweep` para arcos, `rot` para
+módulos e `angle` para marcadores) e usados em **radianos** no núcleo. A API e o
+leitor também aceitam os nomes antigos `start_deg`, `sweep_deg`, `rot_deg` e
+`angle_deg`.
+
+## Interface
+
+A janela é dividida em quatro áreas:
+
+- **Faixa (ribbon)** no topo, com abas:
+  - **Inserir** — formas (linha, Bézier), curvas (arco 90°, curva 90°, 180°,
+    curva S), cruzamento 90° e edição (desfazer, limpar).
+  - **Documento** — novo, abrir, salvar e presets de arena (4 × 3 m e 3 × 4 m).
+  - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias.
+- **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
+- **Prancheta** ao centro, com grade, margem de segurança, cotas e cursor.
+- **Painel** à direita, com versão, compilador, contadores do documento, arena e
+  estado da ponte.
+
+Cada clique de inserção coloca o elemento na posição do cursor e avança o cursor
+para o fim do elemento (sem conexão automática nesta etapa). Os elementos são
+criados no núcleo C++ via `doc.*`; o JavaScript apenas desenha e captura
+entrada.
+
+Salvar e abrir usam um diálogo próprio (`<dialog>`) porque o navegador embutido
+não implementa `window.prompt`.
 
 ## Build
 
