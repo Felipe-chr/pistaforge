@@ -80,4 +80,7 @@ struct Scene {
     [[nodiscard]] BBox bounds() const;
 };
 
+/// Visibilidade efetiva de uma camada do documento.
+[[nodiscard]] bool layer_visible(const Scene& scene, LayerId layer) noexcept;
+
 } // namespace pf

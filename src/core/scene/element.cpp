@@ -150,4 +150,39 @@ std::vector<Vec2> shape_flatten(const Shape& shape, double tolerance_mm) {
         shape);
 }
 
+void translate(LineSegment& line, Vec2 delta) noexcept {
+    line.a += delta;
+    line.b += delta;
+}
+
+void translate(ArcSegment& arc, Vec2 delta) noexcept {
+    arc.center += delta;
+}
+
+void translate(CubicBezier& bezier, Vec2 delta) noexcept {
+    bezier.p0 += delta;
+    bezier.p1 += delta;
+    bezier.p2 += delta;
+    bezier.p3 += delta;
+}
+
+void translate(ModuleInstance& module, Vec2 delta) noexcept {
+    module.transform.translation += delta;
+}
+
+void translate(Shape& shape, Vec2 delta) noexcept {
+    std::visit(
+        Overloaded{
+            [delta](LineSegment& line) { translate(line, delta); },
+            [delta](ArcSegment& arc) { translate(arc, delta); },
+            [delta](CubicBezier& bezier) { translate(bezier, delta); },
+            [delta](ModuleInstance& module) { translate(module, delta); },
+        },
+        shape);
+}
+
+void translate(Element& element, Vec2 delta) noexcept {
+    translate(element.shape, delta);
+}
+
 } // namespace pf

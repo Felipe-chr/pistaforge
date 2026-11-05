@@ -17,12 +17,14 @@
 #include "app/bridge/error.hpp"
 #include "app/bridge/state.hpp"
 #include "core/io/scene_json.hpp"
+#include "core/scene/snap.hpp"
 #include "core/scene/validation.hpp"
 
 namespace pf {
 namespace {
 
 using Json = Dispatcher::Json;
+using Handler = Dispatcher::Handler;
 
 constexpr double kDegToRad = std::numbers::pi / 180.0;
 
@@ -92,6 +94,15 @@ double number_or(const Json& params, std::string_view key, double fallback) {
     return it->get<double>();
 }
 
+bool bool_or(const Json& params, std::string_view key, bool fallback) {
+    const auto it = params.find(std::string{key});
+    if (it == params.end()) return fallback;
+    if (!it->is_boolean()) {
+        fail("invalid_params", "Campo '" + std::string{key} + "' deve ser booleano.");
+    }
+    return it->get<bool>();
+}
+
 std::uint64_t id_param(const Json& params, std::string_view key) {
     const Json& value = field(params, key);
     if (!value.is_number_unsigned() && !value.is_number_integer()) {
@@ -143,16 +154,6 @@ LayerId layer_param(const Json& params, LayerId fallback = LayerId::Track) {
     return *layer;
 }
 
-bool layer_visible(const Scene& scene, LayerId layer) noexcept {
-    switch (layer) {
-        case LayerId::Track: return scene.layers.track;
-        case LayerId::Markers: return scene.layers.markers;
-        case LayerId::Annotations: return scene.layers.annotations;
-        case LayerId::Guides: return scene.layers.guides;
-    }
-    return true;
-}
-
 Json arena_json(const Arena& arena) {
     return Json{
         {"name", arena.name},
@@ -176,27 +177,29 @@ void apply_arena(Arena& arena, const Json& value) {
     if (!value.is_object()) {
         fail("invalid_params", "Campo 'arena' deve ser um objeto.");
     }
+    Arena updated = arena;
     if (value.contains("name")) {
         if (!value.at("name").is_string()) {
             fail("invalid_params", "Campo 'arena.name' deve ser texto.");
         }
-        arena.name = value.at("name").get<std::string>();
+        updated.name = value.at("name").get<std::string>();
     }
     if (value.contains("width")) {
-        arena.width_mm = positive_number(value.at("width"), "arena.width");
+        updated.width_mm = positive_number(value.at("width"), "arena.width");
     }
     if (value.contains("height")) {
-        arena.height_mm = positive_number(value.at("height"), "arena.height");
+        updated.height_mm = positive_number(value.at("height"), "arena.height");
     }
     if (value.contains("margin")) {
-        arena.margin_mm = non_negative_number(value.at("margin"), "arena.margin");
+        updated.margin_mm = non_negative_number(value.at("margin"), "arena.margin");
     }
     if (value.contains("show_dimensions")) {
         if (!value.at("show_dimensions").is_boolean()) {
             fail("invalid_params", "Campo 'arena.show_dimensions' deve ser booleano.");
         }
-        arena.show_dimensions = value.at("show_dimensions").get<bool>();
+        updated.show_dimensions = value.at("show_dimensions").get<bool>();
     }
+    arena = updated;
 }
 
 Json doc_summary(const AppState& state) {
@@ -211,9 +214,14 @@ Json doc_summary(const AppState& state) {
     };
 }
 
-void commit_change(AppState& state) {
-    state.scene.touch();
-    state.rebuild_index();
+Json history_json(const AppState& state) {
+    return Json{
+        {"undo", state.history.undo_depth()},
+        {"redo", state.history.redo_depth()},
+        {"undo_label", state.history.undo_label()},
+        {"redo_label", state.history.redo_label()},
+        {"limit", state.history.limit()},
+    };
 }
 
 void ensure_port_exists(const Scene& scene, const PortRef& ref) {
@@ -231,6 +239,51 @@ void ensure_port_exists(const Scene& scene, const PortRef& ref) {
     }
 }
 
+/// Registra um método que altera o documento.
+///
+/// Guarda o estado anterior no histórico, atualiza a revisão e reconstrói o
+/// índice espacial. O campo `rev` da resposta é preenchido automaticamente.
+/// `merge_param` nomeia um parâmetro de texto usado para agrupar alterações
+/// contínuas (arrastos) em um único passo de desfazer.
+void add_change(Dispatcher& dispatcher, AppState& state, std::string method,
+                std::string label, Handler handler, std::string merge_param = {}) {
+    dispatcher.add(
+        std::move(method),
+        [&state, label = std::move(label), handler = std::move(handler),
+         merge_param = std::move(merge_param)](const Json& params) -> Json {
+            const Scene before = state.scene;
+
+            std::string merge_key;
+            if (!merge_param.empty() && params.is_object()) {
+                const auto it = params.find(merge_param);
+                if (it != params.end() && it->is_string()) {
+                    merge_key = it->get<std::string>();
+                }
+            }
+
+            Json result = handler(params);
+            state.history.record(before, label, merge_key);
+            state.scene.touch();
+            state.rebuild_index();
+
+            if (result.is_object()) result["rev"] = state.scene.revision;
+            return result;
+        });
+}
+
+/// Alteração que não entra no histórico (ex.: visibilidade de camada).
+void add_untracked_change(Dispatcher& dispatcher, AppState& state, std::string method,
+                          Handler handler) {
+    dispatcher.add(std::move(method),
+                   [&state, handler = std::move(handler)](const Json& params) -> Json {
+                       Json result = handler(params);
+                       state.scene.touch();
+                       state.rebuild_index();
+                       if (result.is_object()) result["rev"] = state.scene.revision;
+                       return result;
+                   });
+}
+
 } // namespace
 
 void register_doc_api(Dispatcher& dispatcher, AppState& state) {
@@ -241,7 +294,9 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
             apply_arena(state.scene.arena, params.at("arena"));
         }
         state.path.clear();
-        commit_change(state);
+        state.history.reset();
+        state.scene.touch();
+        state.rebuild_index();
         return doc_summary(state);
     });
 
@@ -272,6 +327,7 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         }
 
         state.path = std::filesystem::absolute(path);
+        state.history.reset();
         state.rebuild_index();
         return doc_summary(state);
     });
@@ -306,7 +362,7 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         return Json{{"path", state.path.string()}, {"rev", state.scene.revision}};
     });
 
-    dispatcher.add("doc.addLine", [&state](const Json& params) {
+    add_change(dispatcher, state, "doc.addLine", "Inserir linha", [&state](const Json& params) {
         require_object(params);
         const Vec2 a = point_param(params, "a");
         const Vec2 b = point_param(params, "b");
@@ -315,11 +371,10 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         const LayerId layer = layer_param(params);
 
         const ElementId id = state.scene.add_element(LineSegment{a, b}, width, layer).id;
-        commit_change(state);
-        return Json{{"id", id}, {"rev", state.scene.revision}};
+        return Json{{"id", id}};
     });
 
-    dispatcher.add("doc.addCubic", [&state](const Json& params) {
+    add_change(dispatcher, state, "doc.addCubic", "Inserir Bézier", [&state](const Json& params) {
         require_object(params);
         const CubicBezier curve{
             .p0 = point_param(params, "p0"),
@@ -332,11 +387,10 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         const LayerId layer = layer_param(params);
 
         const ElementId id = state.scene.add_element(curve, width, layer).id;
-        commit_change(state);
-        return Json{{"id", id}, {"rev", state.scene.revision}};
+        return Json{{"id", id}};
     });
 
-    dispatcher.add("doc.addArc", [&state](const Json& params) {
+    add_change(dispatcher, state, "doc.addArc", "Inserir arco", [&state](const Json& params) {
         require_object(params);
         const ArcSegment arc{
             .center = point_param(params, "center"),
@@ -354,70 +408,70 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         const LayerId layer = layer_param(params);
 
         const ElementId id = state.scene.add_element(arc, width, layer).id;
-        commit_change(state);
-        return Json{{"id", id}, {"rev", state.scene.revision}};
+        return Json{{"id", id}};
     });
 
-    dispatcher.add("doc.addModule", [&state](const Json& params) {
-        require_object(params);
-        const std::string template_id = string_param(params, "template");
-        const ModuleTemplate* definition = find_module_template(template_id);
-        if (definition == nullptr) {
-            fail("unknown_template", "Template desconhecido: " + template_id + ".");
-        }
+    add_change(dispatcher, state, "doc.addModule", "Inserir módulo",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const std::string template_id = string_param(params, "template");
+                   const ModuleTemplate* definition = find_module_template(template_id);
+                   if (definition == nullptr) {
+                       fail("unknown_template", "Template desconhecido: " + template_id + ".");
+                   }
 
-        ModuleInstance module;
-        module.template_id = template_id;
-        module.template_version = params.value("version", definition->version);
+                   ModuleInstance module;
+                   module.template_id = template_id;
+                   module.template_version = params.value("version", definition->version);
 
-        if (params.contains("params")) {
-            const Json& values = params.at("params");
-            if (!values.is_object()) {
-                fail("invalid_params", "Campo 'params' deve ser um objeto.");
-            }
-            for (const auto& [key, entry] : values.items()) {
-                if (!entry.is_number()) {
-                    fail("invalid_params",
-                         "Parâmetro '" + key + "' deve ser numérico.");
-                }
-                module.params[key] = entry.get<double>();
-            }
-        }
+                   if (params.contains("params")) {
+                       const Json& values = params.at("params");
+                       if (!values.is_object()) {
+                           fail("invalid_params", "Campo 'params' deve ser um objeto.");
+                       }
+                       for (const auto& [key, entry] : values.items()) {
+                           if (!entry.is_number()) {
+                               fail("invalid_params",
+                                    "Parâmetro '" + key + "' deve ser numérico.");
+                           }
+                           module.params[key] = entry.get<double>();
+                       }
+                   }
 
-        if (params.contains("transform")) {
-            const Json& transform = params.at("transform");
-            if (!transform.is_object()) {
-                fail("invalid_params", "Campo 'transform' deve ser um objeto.");
-            }
-            module.transform.translation = {
-                transform.value("tx", 0.0),
-                transform.value("ty", 0.0),
-            };
-            module.transform.rotation =
-                transform.value("rot", transform.value("rot_deg", 0.0)) * kDegToRad;
-            module.transform.mirrored = transform.value("mirrored", false);
-        }
+                   if (params.contains("transform")) {
+                       const Json& transform = params.at("transform");
+                       if (!transform.is_object()) {
+                           fail("invalid_params", "Campo 'transform' deve ser um objeto.");
+                       }
+                       module.transform.translation = {
+                           transform.value("tx", 0.0),
+                           transform.value("ty", 0.0),
+                       };
+                       module.transform.rotation =
+                           transform.value("rot", transform.value("rot_deg", 0.0)) * kDegToRad;
+                       module.transform.mirrored = transform.value("mirrored", false);
+                   }
 
-        const double width = number_or(params, "width", 19.0);
-        if (!(width > 0.0)) fail("invalid_params", "Campo 'width' deve ser positivo.");
-        const LayerId layer = layer_param(params);
+                   const double width = number_or(params, "width", 19.0);
+                   if (!(width > 0.0)) fail("invalid_params", "Campo 'width' deve ser positivo.");
+                   const LayerId layer = layer_param(params);
 
-        const ElementId id = state.scene.add_element(std::move(module), width, layer).id;
-        commit_change(state);
-        return Json{{"id", id}, {"rev", state.scene.revision}};
-    });
+                   const ElementId id =
+                       state.scene.add_element(std::move(module), width, layer).id;
+                   return Json{{"id", id}};
+               });
 
-    dispatcher.add("doc.removeElement", [&state](const Json& params) {
-        require_object(params);
-        const ElementId id = id_param(params, "id");
-        if (!state.scene.remove_element(id)) {
-            fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
-        }
-        commit_change(state);
-        return Json{{"rev", state.scene.revision}, {"removed", id}};
-    });
+    add_change(dispatcher, state, "doc.removeElement", "Remover elemento",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   if (!state.scene.remove_element(id)) {
+                       fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                   }
+                   return Json{{"removed", id}};
+               });
 
-    dispatcher.add("doc.connect", [&state](const Json& params) {
+    add_change(dispatcher, state, "doc.connect", "Conectar portas", [&state](const Json& params) {
         require_object(params);
         const PortRef a = port_param(params, "a");
         const PortRef b = port_param(params, "b");
@@ -436,55 +490,100 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         }
 
         const ConnectionId id = state.scene.add_connection(a, b).id;
-        commit_change(state);
-        return Json{{"id", id}, {"rev", state.scene.revision}};
+        return Json{{"id", id}};
     });
 
-    dispatcher.add("doc.disconnect", [&state](const Json& params) {
-        require_object(params);
-        const ConnectionId id = id_param(params, "id");
-        if (!state.scene.remove_connection(id)) {
-            fail("not_found", "Conexão inexistente: " + std::to_string(id) + ".");
-        }
-        commit_change(state);
-        return Json{{"rev", state.scene.revision}, {"removed", id}};
-    });
+    add_change(dispatcher, state, "doc.disconnect", "Desconectar portas",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ConnectionId id = id_param(params, "id");
+                   if (!state.scene.remove_connection(id)) {
+                       fail("not_found", "Conexão inexistente: " + std::to_string(id) + ".");
+                   }
+                   return Json{{"removed", id}};
+               });
 
-    dispatcher.add("doc.addMarker", [&state](const Json& params) {
-        require_object(params);
+    add_change(dispatcher, state, "doc.addMarker", "Inserir marcador",
+               [&state](const Json& params) {
+                   require_object(params);
 
-        MarkerType type = MarkerType::StartFinish;
-        if (params.contains("type")) {
-            const auto parsed = marker_type_from_string(string_param(params, "type"));
-            if (!parsed.has_value()) {
-                fail("invalid_params", "Tipo de marcador desconhecido.");
-            }
-            type = *parsed;
-        }
+                   MarkerType type = MarkerType::StartFinish;
+                   if (params.contains("type")) {
+                       const auto parsed = marker_type_from_string(string_param(params, "type"));
+                       if (!parsed.has_value()) {
+                           fail("invalid_params", "Tipo de marcador desconhecido.");
+                       }
+                       type = *parsed;
+                   }
 
-        Marker marker;
-        marker.id = state.scene.allocate_id();
-        marker.type = type;
-        marker.position = {number_or(params, "x", 0.0), number_or(params, "y", 0.0)};
-        marker.angle =
-            number_or(params, "angle", number_or(params, "angle_deg", 0.0)) * kDegToRad;
-        marker.text = params.value("text", std::string{});
-        const MarkerId id = marker.id;
-        state.scene.markers.push_back(std::move(marker));
+                   Marker marker;
+                   marker.id = state.scene.allocate_id();
+                   marker.type = type;
+                   marker.position = {number_or(params, "x", 0.0), number_or(params, "y", 0.0)};
+                   marker.angle =
+                       number_or(params, "angle", number_or(params, "angle_deg", 0.0)) * kDegToRad;
+                   marker.text = params.value("text", std::string{});
+                   const MarkerId id = marker.id;
+                   state.scene.markers.push_back(std::move(marker));
 
-        commit_change(state);
-        return Json{{"id", id}, {"rev", state.scene.revision}};
-    });
+                   return Json{{"id", id}};
+               });
 
-    dispatcher.add("doc.setArena", [&state](const Json& params) {
-        require_object(params);
-        apply_arena(state.scene.arena, params);
-        commit_change(state);
-        return Json{{"rev", state.scene.revision},
-                    {"arena", arena_json(state.scene.arena)}};
-    });
+    add_change(dispatcher, state, "doc.moveElement", "Mover elemento",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element* element = state.scene.find_element(id);
+                   if (element == nullptr) {
+                       fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                   }
+                   if (element->locked) {
+                       fail("element_locked", "O elemento está bloqueado.");
+                   }
 
-    dispatcher.add("doc.setLayers", [&state](const Json& params) {
+                   const Vec2 delta = point_param(params, "delta");
+                   translate(*element, delta);
+                   return Json{{"id", id}, {"delta", Json::array({delta.x, delta.y})}};
+               },
+               "merge");
+
+    add_change(dispatcher, state, "doc.setElement", "Alterar elemento",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element* element = state.scene.find_element(id);
+                   if (element == nullptr) {
+                       fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                   }
+
+                   if (params.contains("width")) {
+                       element->width_mm = positive_number(params.at("width"), "width");
+                   }
+                   if (params.contains("layer")) {
+                       element->layer = layer_param(params);
+                   }
+                   if (params.contains("hidden")) {
+                       element->hidden = bool_or(params, "hidden", element->hidden);
+                   }
+                   if (params.contains("locked")) {
+                       element->locked = bool_or(params, "locked", element->locked);
+                   }
+                   if (params.contains("label")) {
+                       element->label = string_param(params, "label");
+                   }
+
+                   return Json{{"id", id}};
+               },
+               "merge");
+
+    add_change(dispatcher, state, "doc.setArena", "Alterar arena",
+               [&state](const Json& params) {
+                   require_object(params);
+                   apply_arena(state.scene.arena, params);
+                   return Json{{"arena", arena_json(state.scene.arena)}};
+               });
+
+    add_untracked_change(dispatcher, state, "doc.setLayers", [&state](const Json& params) {
         require_object(params);
         const auto apply = [&params](std::string_view key, bool& target) {
             const auto it = params.find(std::string{key});
@@ -499,10 +598,40 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         apply("markers", state.scene.layers.markers);
         apply("annotations", state.scene.layers.annotations);
         apply("guides", state.scene.layers.guides);
-        commit_change(state);
-        return Json{{"rev", state.scene.revision},
-                    {"layers", layers_json(state.scene.layers)}};
+        return Json{{"layers", layers_json(state.scene.layers)}};
     });
+
+    dispatcher.add("doc.undo", [&state](const Json&) {
+        std::string label;
+        if (!state.history.undo(state.scene, &label)) {
+            fail("nothing_to_undo", "Nada para desfazer.");
+        }
+        state.rebuild_index();
+        return Json{
+            {"rev", state.scene.revision},
+            {"label", label},
+            {"can_undo", state.history.can_undo()},
+            {"can_redo", state.history.can_redo()},
+            {"history", history_json(state)},
+        };
+    });
+
+    dispatcher.add("doc.redo", [&state](const Json&) {
+        std::string label;
+        if (!state.history.redo(state.scene, &label)) {
+            fail("nothing_to_redo", "Nada para refazer.");
+        }
+        state.rebuild_index();
+        return Json{
+            {"rev", state.scene.revision},
+            {"label", label},
+            {"can_undo", state.history.can_undo()},
+            {"can_redo", state.history.can_redo()},
+            {"history", history_json(state)},
+        };
+    });
+
+    dispatcher.add("doc.history", [&state](const Json&) { return history_json(state); });
 
     dispatcher.add("scene.ports", [&state](const Json&) {
         Json ports = Json::array();
@@ -578,6 +707,37 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
             }
         }
 
+        return result;
+    });
+
+    dispatcher.add("scene.snap", [&state](const Json& params) {
+        require_object(params);
+        const Vec2 point = point_param(params, "point");
+
+        SnapOptions options;
+        options.tolerance_mm = std::max(number_or(params, "tolerance", 12.0), 0.0);
+        options.grid_mm = number_or(params, "grid", 10.0);
+        options.ports = bool_or(params, "ports", true);
+        options.elements = bool_or(params, "elements", true);
+        options.grid = bool_or(params, "snap_grid", true);
+        if (params.contains("ignore")) {
+            options.ignore = id_param(params, "ignore");
+        }
+
+        const SnapResult snap = snap_point(state.scene, point, options);
+
+        Json result{
+            {"kind", std::string{to_string(snap.kind)}},
+            {"point", Json::array({snap.point.x, snap.point.y})},
+            {"distance", snap.distance},
+        };
+        if (snap.kind == SnapKind::Port) {
+            result["element"] = snap.element;
+            result["port"] = snap.port;
+            result["direction"] = Json::array({snap.direction.x, snap.direction.y});
+        } else if (snap.kind == SnapKind::Element) {
+            result["element"] = snap.element;
+        }
         return result;
     });
 

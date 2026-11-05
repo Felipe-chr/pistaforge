@@ -423,3 +423,219 @@ TEST_CASE("API: erros de arquivo") {
     CHECK_FALSE(load_missing["ok"].get<bool>());
     CHECK(load_missing["error"]["code"] == "io_error");
 }
+
+TEST_CASE("API: desfazer e refazer alterações") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const json added = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})");
+    REQUIRE(added["ok"].get<bool>());
+    const auto id = added["result"]["id"].get<std::uint64_t>();
+    const auto revision_after_add = added["result"]["rev"].get<std::uint64_t>();
+
+    const json history = api.call(R"({"id":3,"method":"doc.history"})");
+    REQUIRE(history["ok"].get<bool>());
+    CHECK(history["result"]["undo"] == 1);
+    CHECK(history["result"]["redo"] == 0);
+    CHECK(history["result"]["undo_label"] == "Inserir linha");
+    CHECK(history["result"]["redo_label"].get<std::string>().empty());
+
+    const json undone = api.call(R"({"id":4,"method":"doc.undo"})");
+    REQUIRE(undone["ok"].get<bool>());
+    CHECK(undone["result"]["label"] == "Inserir linha");
+    CHECK(undone["result"]["rev"] == revision_after_add + 1);
+    CHECK_FALSE(undone["result"]["can_undo"].get<bool>());
+    CHECK(undone["result"]["can_redo"].get<bool>());
+
+    const json empty = api.call(R"({"id":5,"method":"doc.state"})");
+    CHECK(empty["result"]["elements"].empty());
+
+    const json redone = api.call(R"({"id":6,"method":"doc.redo"})");
+    REQUIRE(redone["ok"].get<bool>());
+    CHECK(redone["result"]["rev"] > undone["result"]["rev"].get<std::uint64_t>());
+
+    const json restored = api.call(R"({"id":7,"method":"doc.state"})");
+    REQUIRE(restored["result"]["elements"].size() == 1);
+    CHECK(restored["result"]["elements"][0]["id"] == id);
+
+    const json nothing = api.call(R"({"id":8,"method":"doc.redo"})");
+    CHECK_FALSE(nothing["ok"].get<bool>());
+    CHECK(nothing["error"]["code"] == "nothing_to_redo");
+
+    const json undone_again = api.call(R"({"id":9,"method":"doc.undo"})");
+    REQUIRE(undone_again["ok"].get<bool>());
+    const json empty_again = api.call(R"({"id":10,"method":"doc.undo"})");
+    CHECK_FALSE(empty_again["ok"].get<bool>());
+    CHECK(empty_again["error"]["code"] == "nothing_to_undo");
+}
+
+TEST_CASE("API: mover elemento agrupa arrastos") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto id = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+
+    const json first = api.call_json(json{
+        {"id", 3},
+        {"method", "doc.moveElement"},
+        {"params", {{"id", id}, {"delta", {10.0, 5.0}}, {"merge", "drag-1"}}},
+    });
+    REQUIRE(first["ok"].get<bool>());
+    CHECK(first["result"]["delta"][0] == 10.0);
+    CHECK(first["result"]["delta"][1] == 5.0);
+
+    const json second = api.call_json(json{
+        {"id", 4},
+        {"method", "doc.moveElement"},
+        {"params", {{"id", id}, {"delta", {10.0, 5.0}}, {"merge", "drag-1"}}},
+    });
+    REQUIRE(second["ok"].get<bool>());
+
+    const json history = api.call(R"({"id":5,"method":"doc.history"})");
+    CHECK(history["result"]["undo"] == 2); // inserção + um arrasto agrupado
+
+    const json moved = api.call(R"({"id":6,"method":"doc.state"})");
+    const json& element = moved["result"]["elements"][0];
+    CHECK(element["a"][0] == 20.0);
+    CHECK(element["a"][1] == 10.0);
+    CHECK(element["b"][0] == 120.0);
+    CHECK(element["b"][1] == 10.0);
+
+    const json undone = api.call(R"({"id":7,"method":"doc.undo"})");
+    REQUIRE(undone["ok"].get<bool>());
+
+    const json back = api.call(R"({"id":8,"method":"doc.state"})");
+    CHECK(back["result"]["elements"][0]["a"][0] == 0.0);
+    CHECK(back["result"]["elements"][0]["a"][1] == 0.0);
+}
+
+TEST_CASE("API: mover elemento inválido ou bloqueado") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto id = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+
+    const json missing = api.call_json(json{
+        {"id", 3},
+        {"method", "doc.moveElement"},
+        {"params", {{"id", 9999}, {"delta", {10.0, 0.0}}}},
+    });
+    CHECK_FALSE(missing["ok"].get<bool>());
+    CHECK(missing["error"]["code"] == "not_found");
+
+    const json locked = api.call_json(json{
+        {"id", 4},
+        {"method", "doc.setElement"},
+        {"params", {{"id", id}, {"locked", true}}},
+    });
+    REQUIRE(locked["ok"].get<bool>());
+
+    const json blocked = api.call_json(json{
+        {"id", 5},
+        {"method", "doc.moveElement"},
+        {"params", {{"id", id}, {"delta", {10.0, 0.0}}}},
+    });
+    CHECK_FALSE(blocked["ok"].get<bool>());
+    CHECK(blocked["error"]["code"] == "element_locked");
+}
+
+TEST_CASE("API: alterar propriedades do elemento") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto id = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+
+    const json changed = api.call_json(json{
+        {"id", 3},
+        {"method", "doc.setElement"},
+        {"params",
+         {{"id", id},
+          {"width", 30.0},
+          {"layer", "annotations"},
+          {"hidden", true},
+          {"label", "reta"}}},
+    });
+    REQUIRE(changed["ok"].get<bool>());
+
+    const json state = api.call(R"({"id":4,"method":"doc.state"})");
+    const json& element = state["result"]["elements"][0];
+    CHECK(element["width"] == 30.0);
+    CHECK(element["layer"] == "annotations");
+    CHECK(element["hidden"] == true);
+    CHECK(element["label"] == "reta");
+
+    const json bad_width = api.call_json(json{
+        {"id", 5},
+        {"method", "doc.setElement"},
+        {"params", {{"id", id}, {"width", 0.0}}},
+    });
+    CHECK_FALSE(bad_width["ok"].get<bool>());
+    CHECK(bad_width["error"]["code"] == "invalid_params");
+
+    const json bad_layer = api.call_json(json{
+        {"id", 6},
+        {"method", "doc.setElement"},
+        {"params", {{"id", id}, {"layer", "inexistente"}}},
+    });
+    CHECK_FALSE(bad_layer["ok"].get<bool>());
+    CHECK(bad_layer["error"]["code"] == "invalid_params");
+}
+
+TEST_CASE("API: encaixe de pontos") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto id = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[200,0]}})")["result"]["id"].get<std::uint64_t>();
+
+    const json element = api.call_json(json{
+        {"id", 3},
+        {"method", "scene.snap"},
+        {"params", {{"point", {50.0, 3.0}}, {"tolerance", 12.0}, {"snap_grid", false}}},
+    });
+    REQUIRE(element["ok"].get<bool>());
+    CHECK(element["result"]["kind"] == "element");
+    CHECK(element["result"]["point"][0] == 50.0);
+    CHECK(element["result"]["point"][1] == 0.0);
+    CHECK(element["result"]["element"] == id);
+    CHECK(element["result"]["distance"] == doctest::Approx(3.0));
+
+    const json port = api.call_json(json{
+        {"id", 4},
+        {"method", "scene.snap"},
+        {"params", {{"point", {1.0, 1.0}}, {"tolerance", 12.0}, {"snap_grid", false}}},
+    });
+    REQUIRE(port["ok"].get<bool>());
+    CHECK(port["result"]["kind"] == "port");
+    CHECK(port["result"]["port"] == "start");
+    CHECK(port["result"]["element"] == id);
+    CHECK(port["result"]["point"][0] == 0.0);
+    CHECK(port["result"]["point"][1] == 0.0);
+
+    const json grid = api.call_json(json{
+        {"id", 5},
+        {"method", "scene.snap"},
+        {"params", {{"point", {413.0, 27.0}}}},
+    });
+    REQUIRE(grid["ok"].get<bool>());
+    CHECK(grid["result"]["kind"] == "grid");
+    CHECK(grid["result"]["point"][0] == 410.0);
+    CHECK(grid["result"]["point"][1] == 30.0);
+
+    const json no_grid = api.call_json(json{
+        {"id", 6},
+        {"method", "scene.snap"},
+        {"params", {{"point", {413.0, 27.0}}, {"snap_grid", false}}},
+    });
+    REQUIRE(no_grid["ok"].get<bool>());
+    CHECK(no_grid["result"]["kind"] == "none");
+
+    const json ignored = api.call_json(json{
+        {"id", 7},
+        {"method", "scene.snap"},
+        {"params",
+         {{"point", {50.0, 3.0}}, {"tolerance", 12.0}, {"snap_grid", false}, {"ignore", id}}},
+    });
+    REQUIRE(ignored["ok"].get<bool>());
+    CHECK(ignored["result"]["kind"] == "none");
+}

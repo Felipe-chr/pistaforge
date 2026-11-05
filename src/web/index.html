@@ -13,7 +13,7 @@
             <span class="brand-mark" aria-hidden="true"></span>
             <div class="brand-text">
                 <strong>PistaForge</strong>
-                <span>editor de pistas · M1</span>
+                <span>editor de pistas · M2</span>
             </div>
         </div>
 
@@ -38,6 +38,37 @@
 
         <div class="ribbon-panels">
             <div class="ribbon-panel active" data-panel="insert" role="tabpanel">
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button tool-button active" data-tool="select" title="Selecionar e mover elementos (V)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M18 7 L46 21 L33 23 L27 35 Z"/>
+                            </svg>
+                            <span>Selecionar</span>
+                        </button>
+                        <button class="ribbon-button tool-button" data-tool="line" title="Desenhar reta arrastando na arena (L)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M12 32 L52 8"/>
+                                <path d="M12 26 V32 H18" opacity="0.5"/>
+                                <path d="M46 8 H52 V14" opacity="0.5"/>
+                                <circle cx="12" cy="32" r="2.4" fill="currentColor"/>
+                                <circle cx="52" cy="8" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>Reta</span>
+                        </button>
+                        <button class="ribbon-button tool-button" data-tool="bezier" title="Desenhar Bézier arrastando na arena (B)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M10 30 C 22 8, 42 34, 54 10"/>
+                                <path d="M10 30 L22 8 M54 10 L42 34" stroke-dasharray="3 3" opacity="0.45"/>
+                                <circle cx="10" cy="30" r="2.4" fill="currentColor"/>
+                                <circle cx="54" cy="10" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>Bézier</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Ferramentas</div>
+                </div>
+
                 <div class="ribbon-group">
                     <div class="ribbon-items">
                         <button class="ribbon-button" data-action="insert-line" title="Inserir uma reta">
@@ -113,12 +144,26 @@
 
                 <div class="ribbon-group">
                     <div class="ribbon-items">
-                        <button class="ribbon-button" data-action="undo" title="Desfazer a última inserção">
+                        <button class="ribbon-button" data-action="undo" title="Desfazer (Ctrl+Z)">
                             <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
                                 <path d="M18 30 C 18 14, 48 14, 48 26"/>
                                 <path d="M12 24 L18 30 L24 24"/>
                             </svg>
                             <span>Desfazer</span>
+                        </button>
+                        <button class="ribbon-button" data-action="redo" title="Refazer (Ctrl+Y)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M46 30 C 46 14, 16 14, 16 26"/>
+                                <path d="M52 24 L46 30 L40 24"/>
+                            </svg>
+                            <span>Refazer</span>
+                        </button>
+                        <button class="ribbon-button" data-action="delete" title="Excluir o elemento selecionado (Del)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M18 12 H46 M26 12 V8 H38 V12 M22 12 L24 34 H40 L42 12"/>
+                                <path d="M30 18 V29 M34 18 V29" opacity="0.6"/>
+                            </svg>
+                            <span>Excluir</span>
                         </button>
                         <button class="ribbon-button" data-action="new" title="Começar um documento novo">
                             <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
@@ -184,6 +229,33 @@
             </div>
 
             <div class="ribbon-panel" data-panel="view" role="tabpanel">
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="zoom-in" title="Aproximar (roda do mouse)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <circle cx="28" cy="18" r="11"/>
+                                <path d="M36 26 L48 34 M28 13 V23 M23 18 H33"/>
+                            </svg>
+                            <span>Zoom +</span>
+                        </button>
+                        <button class="ribbon-button" data-action="zoom-out" title="Afastar (roda do mouse)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <circle cx="28" cy="18" r="11"/>
+                                <path d="M36 26 L48 34 M23 18 H33"/>
+                            </svg>
+                            <span>Zoom −</span>
+                        </button>
+                        <button class="ribbon-button" data-action="zoom-fit" title="Ajustar a arena à janela">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <rect x="12" y="8" width="40" height="26" rx="2"/>
+                                <path d="M20 16 V24 M20 16 H28 M44 24 V16 M44 24 H36" opacity="0.6"/>
+                            </svg>
+                            <span>Ajustar</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Zoom</div>
+                </div>
+
                 <div class="ribbon-group">
                     <div class="ribbon-items ribbon-items-column">
                         <label class="ribbon-check"><input class="layer-toggle" data-layer="track" type="checkbox" checked> Traçado</label>
@@ -259,8 +331,8 @@
     <main class="workspace">
         <canvas id="canvas" aria-label="Arena da pista"></canvas>
         <div class="canvas-hint">
-            <strong>M1 · inserção</strong>
-            <span>clique em uma curva na faixa para desenhar</span>
+            <strong>M2 · edição</strong>
+            <span>clique para selecionar · arraste para mover · roda para zoom</span>
         </div>
     </main>
 
@@ -285,6 +357,17 @@
         </section>
 
         <section class="panel">
+            <h2>Seleção</h2>
+            <dl class="facts">
+                <div><dt>Elemento</dt><dd id="selection-id">—</dd></div>
+                <div><dt>Tipo</dt><dd id="selection-type">—</dd></div>
+                <div><dt>Camada</dt><dd id="selection-layer">—</dd></div>
+                <div><dt>Largura</dt><dd id="selection-width">—</dd></div>
+            </dl>
+            <p class="hint" id="selection-hint">Clique em um elemento para selecioná-lo.</p>
+        </section>
+
+        <section class="panel">
             <h2>Arena</h2>
             <dl class="facts">
                 <div><dt>Dimensões</dt><dd id="arena-dims">—</dd></div>
@@ -306,6 +389,8 @@
     <footer class="statusbar">
         <span id="status">Iniciando…</span>
         <span class="status-right">
+            <span id="zoom-status">100%</span>
+            <span class="status-sep" aria-hidden="true"></span>
             <span id="arena-status">—</span>
             <span class="status-sep" aria-hidden="true"></span>
             <span>mm · 1:1</span>

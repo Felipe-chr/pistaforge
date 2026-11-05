@@ -190,3 +190,42 @@ TEST_CASE("Cena: revisão avança com touch") {
     scene.touch();
     CHECK(scene.revision == before + 1);
 }
+
+TEST_CASE("Cena: translação desloca todas as formas") {
+    const Vec2 delta{10.0, -5.0};
+
+    LineSegment line{{0.0, 0.0}, {100.0, 0.0}};
+    pf::translate(line, delta);
+    CHECK(line.a == Vec2{10.0, -5.0});
+    CHECK(line.b == Vec2{110.0, -5.0});
+
+    pf::ArcSegment arc{{0.0, 0.0}, 50.0, 0.0, std::numbers::pi / 2.0};
+    pf::translate(arc, delta);
+    CHECK(arc.center == Vec2{10.0, -5.0});
+    CHECK(arc.radius == 50.0);
+    CHECK(arc.start_angle == 0.0);
+    CHECK(arc.sweep_angle == std::numbers::pi / 2.0);
+
+    CubicBezier bezier{{0.0, 0.0}, {1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}};
+    pf::translate(bezier, delta);
+    CHECK(bezier.p0 == Vec2{10.0, -5.0});
+    CHECK(bezier.p1 == Vec2{11.0, -3.0});
+    CHECK(bezier.p2 == Vec2{13.0, -1.0});
+    CHECK(bezier.p3 == Vec2{15.0, 1.0});
+
+    ModuleInstance module;
+    module.template_id = "cross.90";
+    module.transform.translation = {100.0, 200.0};
+    module.transform.rotation = std::numbers::pi / 2.0;
+    pf::translate(module, delta);
+    CHECK(module.transform.translation == Vec2{110.0, 195.0});
+    CHECK(module.transform.rotation == std::numbers::pi / 2.0);
+
+    Element element;
+    element.shape = LineSegment{{0.0, 0.0}, {10.0, 0.0}};
+    pf::translate(element, delta);
+    const auto* moved = std::get_if<LineSegment>(&element.shape);
+    REQUIRE(moved != nullptr);
+    CHECK(moved->a == Vec2{10.0, -5.0});
+    CHECK(moved->b == Vec2{20.0, -5.0});
+}

@@ -54,4 +54,12 @@ struct Element {
 [[nodiscard]] Vec2 shape_closest_point(const Shape& shape, Vec2 point, double* t_out = nullptr);
 [[nodiscard]] std::vector<Vec2> shape_flatten(const Shape& shape, double tolerance_mm);
 
+/// Translada a forma inteira por `delta` (mm), preservando orientação.
+void translate(LineSegment& line, Vec2 delta) noexcept;
+void translate(ArcSegment& arc, Vec2 delta) noexcept;
+void translate(CubicBezier& bezier, Vec2 delta) noexcept;
+void translate(ModuleInstance& module, Vec2 delta) noexcept;
+void translate(Shape& shape, Vec2 delta) noexcept;
+void translate(Element& element, Vec2 delta) noexcept;
+
 } // namespace pf

@@ -32,6 +32,8 @@ add_library(pf_core STATIC
     src/core/scene/module.cpp
     src/core/scene/element.cpp
     src/core/scene/scene.cpp
+    src/core/scene/history.cpp
+    src/core/scene/snap.cpp
     src/core/scene/validation.cpp
     src/core/io/scene_json.cpp
 )
@@ -90,6 +92,8 @@ add_executable(pf_tests
     tests/test_arc.cpp
     tests/test_index.cpp
     tests/test_scene.cpp
+    tests/test_history.cpp
+    tests/test_snap.cpp
     tests/test_scene_json.cpp
     tests/test_dispatcher.cpp
     tests/test_api_doc.cpp

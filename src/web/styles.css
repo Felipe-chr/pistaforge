@@ -343,6 +343,13 @@ body {
     outline-offset: 1px;
 }
 
+.ribbon-button.active {
+    background: var(--accent-soft);
+    border-color: #a9c2ff;
+    box-shadow: inset 0 0 0 1px #cfddff;
+    color: var(--accent);
+}
+
 .ribbon-icon {
     width: 42px;
     height: 27px;
@@ -557,6 +564,24 @@ body {
     background: #f8fafc;
     box-shadow: var(--shadow);
     cursor: crosshair;
+    touch-action: none;
+}
+
+#canvas.tool-select {
+    cursor: default;
+}
+
+#canvas.tool-line,
+#canvas.tool-bezier {
+    cursor: crosshair;
+}
+
+#canvas.panning {
+    cursor: grabbing;
+}
+
+#canvas.dragging {
+    cursor: move;
 }
 
 .canvas-hint {

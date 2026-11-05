@@ -7,15 +7,34 @@ const state = {
     bridge: "pending",
     p50: null,
     p95: null,
-    history: [],
     view: null,
     measuring: false,
+    selection: null,
+    tool: "select",
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    drag: null,
+    snap: null,
 };
 
 const el = (id) => document.getElementById(id);
 
 let requestId = 0;
 let refreshToken = 0;
+let spaceDown = false;
+
+const LAYER_LABELS = {
+    track: "Traçado",
+    markers: "Marcadores",
+    annotations: "Anotações",
+    guides: "Guias",
+};
+
+const TOOL_LABELS = {
+    select: "Selecionar",
+    line: "Reta",
+    bezier: "Bézier",
+};
 
 function bridgeAvailable() {
     return typeof window.app_call === "function";
@@ -64,6 +83,18 @@ function formatMm(value) {
     return `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mm`;
 }
 
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTypingTarget(target) {
+    return Boolean(
+        target &&
+            (target.closest?.("input, textarea, select") ||
+                target.isContentEditable)
+    );
+}
+
 function askPath(message, fallback) {
     const dialog = el("path-dialog");
     if (!dialog || typeof dialog.showModal !== "function") {
@@ -110,6 +141,7 @@ function updateFacts() {
     el("doc-revision").textContent = String(doc?.revision ?? 0);
     el("doc-cursor").textContent =
         `${Math.round(state.cursor.x)}, ${Math.round(state.cursor.y)}`;
+    el("zoom-status").textContent = `${Math.round(state.zoom * 100)}%`;
 
     el("arena-dims").textContent = `${formatMm(arena.width)} × ${formatMm(arena.height)}`;
     el("arena-margin").textContent = formatMm(arena.margin ?? 0);
@@ -133,7 +165,14 @@ async function refreshDoc() {
     if (token !== refreshToken) return state.doc;
 
     state.doc = doc;
+    if (
+        state.selection != null &&
+        !(doc.elements ?? []).some((element) => element.id === state.selection)
+    ) {
+        state.selection = null;
+    }
     updateFacts();
+    updateSelectionPanel();
     syncLayerToggles();
     draw();
     return doc;
@@ -145,6 +184,34 @@ function syncLayerToggles() {
         const key = input.dataset.layer;
         if (key && key in layers) input.checked = Boolean(layers[key]);
     });
+}
+
+function updateSelectionPanel() {
+    const element = state.doc?.elements?.find(
+        (candidate) => candidate.id === state.selection
+    );
+
+    if (!element) {
+        el("selection-id").textContent = "—";
+        el("selection-type").textContent = "—";
+        el("selection-layer").textContent = "—";
+        el("selection-width").textContent = "—";
+        el("selection-hint").textContent = "Clique em um elemento para selecioná-lo.";
+        return;
+    }
+
+    const typeLabels = {
+        line: "Reta",
+        cubic: "Bézier",
+        arc: "Arco",
+        module: element.template ? `Módulo ${element.template}` : "Módulo",
+    };
+
+    el("selection-id").textContent = String(element.id);
+    el("selection-type").textContent = typeLabels[element.type] ?? element.type;
+    el("selection-layer").textContent = LAYER_LABELS[element.layer] ?? element.layer;
+    el("selection-width").textContent = formatMm(element.width ?? 19);
+    el("selection-hint").textContent = "Arraste para mover · Del para excluir.";
 }
 
 /* ----------------------------------------------------------------- canvas */
@@ -253,6 +320,17 @@ function worldToScreen(point) {
     };
 }
 
+function canvasToWorld(event) {
+    const view = state.view;
+    if (!view) return null;
+
+    const rect = el("canvas").getBoundingClientRect();
+    return {
+        x: (event.clientX - rect.left - view.originX) / view.scale,
+        y: (event.clientY - rect.top - view.originY) / view.scale,
+    };
+}
+
 function tracePolyline(ctx, points) {
     if (!points || points.length < 2) return false;
     ctx.beginPath();
@@ -273,9 +351,22 @@ function drawElements(ctx, doc, layers, scale) {
         if (polylines.length === 0) continue;
 
         const widthPx = Math.max(2, (element.width ?? 19) * scale);
+        const selected = element.id === state.selection;
+
+        if (selected) {
+            ctx.save();
+            ctx.strokeStyle = "rgba(37, 99, 235, 0.22)";
+            ctx.lineWidth = widthPx + 12;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+            for (const points of polylines) {
+                if (tracePolyline(ctx, points)) ctx.stroke();
+            }
+            ctx.restore();
+        }
 
         ctx.save();
-        ctx.strokeStyle = "#0f172a";
+        ctx.strokeStyle = selected ? "#1d4ed8" : "#0f172a";
         ctx.lineWidth = widthPx;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
@@ -285,7 +376,7 @@ function drawElements(ctx, doc, layers, scale) {
         ctx.restore();
 
         ctx.save();
-        ctx.fillStyle = "#2563eb";
+        ctx.fillStyle = selected ? "#f59e0b" : "#2563eb";
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1;
         for (const points of polylines) {
@@ -293,7 +384,7 @@ function drawElements(ctx, doc, layers, scale) {
             for (const point of [points[0], points[points.length - 1]]) {
                 const p = worldToScreen({ x: point[0], y: point[1] });
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, 2.4, 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, selected ? 4 : 2.4, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -344,6 +435,8 @@ function drawGuides(ctx, doc, layers) {
 }
 
 function drawCursor(ctx) {
+    if (state.drag) return;
+
     const p = worldToScreen(state.cursor);
     ctx.save();
     ctx.strokeStyle = "#2563eb";
@@ -377,6 +470,79 @@ function drawCursor(ctx) {
     ctx.restore();
 }
 
+function snapColor(kind) {
+    if (kind === "port") return "#16a34a";
+    if (kind === "element") return "#0ea5e9";
+    return "#94a3b8";
+}
+
+function snapLabel(kind) {
+    if (kind === "port") return "porta";
+    if (kind === "element") return "traçado";
+    return "grade";
+}
+
+function drawSnapIndicator(ctx) {
+    const snap = state.snap;
+    if (!snap || snap.kind === "none" || !snap.point) return;
+
+    const p = worldToScreen({ x: snap.point[0], y: snap.point[1] });
+    const color = snapColor(snap.kind);
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(p.x - 12, p.y);
+    ctx.lineTo(p.x - 8, p.y);
+    ctx.moveTo(p.x + 8, p.y);
+    ctx.lineTo(p.x + 12, p.y);
+    ctx.moveTo(p.x, p.y - 12);
+    ctx.lineTo(p.x, p.y - 8);
+    ctx.moveTo(p.x, p.y + 8);
+    ctx.lineTo(p.x, p.y + 12);
+    ctx.stroke();
+
+    ctx.font = '600 10px "Segoe UI", sans-serif';
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(snapLabel(snap.kind), p.x + 11, p.y - 8);
+    ctx.restore();
+}
+
+function drawPreview(ctx) {
+    const drag = state.drag;
+    if (!drag || drag.mode !== "draw") return;
+
+    ctx.save();
+    ctx.strokeStyle = "#2563eb";
+    ctx.fillStyle = "#2563eb";
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([6, 4]);
+
+    if (drag.tool === "line") {
+        tracePolyline(ctx, [[drag.start.x, drag.start.y], [drag.end.x, drag.end.y]]);
+        ctx.stroke();
+    } else {
+        const curve = bezierFromDrag(drag.start, drag.end, drag.shift);
+        tracePolyline(ctx, sampleCubic(curve));
+        ctx.stroke();
+    }
+
+    ctx.setLineDash([]);
+    for (const point of [drag.start, drag.end]) {
+        const p = worldToScreen(point);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
 function draw() {
     const canvas = el("canvas");
     if (!canvas) return;
@@ -399,19 +565,29 @@ function draw() {
 
     const arena = docArena();
     const padding = 46;
-    const scale = Math.min(
+    const fitScale = Math.min(
         (width - padding * 2) / arena.width,
         (height - padding * 2) / arena.height
     );
 
-    if (!(scale > 0)) return;
+    if (!(fitScale > 0)) return;
 
+    const scale = fitScale * state.zoom;
     const arenaWidth = arena.width * scale;
     const arenaHeight = arena.height * scale;
-    const originX = (width - arenaWidth) / 2;
-    const originY = (height - arenaHeight) / 2;
+    const originX = width / 2 + state.pan.x - arenaWidth / 2;
+    const originY = height / 2 + state.pan.y - arenaHeight / 2;
 
-    state.view = { scale, originX, originY, width, height, arenaWidth, arenaHeight };
+    state.view = {
+        scale,
+        fitScale,
+        originX,
+        originY,
+        width,
+        height,
+        arenaWidth,
+        arenaHeight,
+    };
 
     // Fundo da prancheta.
     ctx.fillStyle = "#f1f4f9";
@@ -512,6 +688,8 @@ function draw() {
     }
 
     drawCursor(ctx);
+    drawPreview(ctx);
+    drawSnapIndicator(ctx);
 
     // Aviso de área vazia.
     if (!doc || (doc.elements?.length ?? 0) === 0) {
@@ -526,11 +704,53 @@ function draw() {
         );
         ctx.font = '400 11px "Segoe UI", sans-serif';
         ctx.fillText(
-            "ou clique na arena para posicionar o cursor",
+            "ou escolha Reta/Bézier e arraste na arena",
             originX + arenaWidth / 2,
             originY + arenaHeight / 2 + 10
         );
     }
+}
+
+/* ------------------------------------------------------------- view control */
+
+function clampZoom(value) {
+    return Math.min(16, Math.max(0.15, value));
+}
+
+function updateZoomStatus() {
+    el("zoom-status").textContent = `${Math.round(state.zoom * 100)}%`;
+}
+
+function zoomBy(factor, clientX, clientY) {
+    const view = state.view;
+    if (!view) return;
+
+    const canvas = el("canvas");
+    const rect = canvas.getBoundingClientRect();
+    const sx = clientX == null ? rect.width / 2 : clientX - rect.left;
+    const sy = clientY == null ? rect.height / 2 : clientY - rect.top;
+
+    const worldX = (sx - view.originX) / view.scale;
+    const worldY = (sy - view.originY) / view.scale;
+
+    state.zoom = clampZoom(state.zoom * factor);
+
+    const arena = docArena();
+    const scale = view.fitScale * state.zoom;
+    state.pan.x =
+        sx - view.width / 2 + (arena.width * scale) / 2 - worldX * scale;
+    state.pan.y =
+        sy - view.height / 2 + (arena.height * scale) / 2 - worldY * scale;
+
+    updateZoomStatus();
+    draw();
+}
+
+function resetView() {
+    state.zoom = 1;
+    state.pan = { x: 0, y: 0 };
+    updateZoomStatus();
+    draw();
 }
 
 /* --------------------------------------------------------------- insertion */
@@ -563,7 +783,7 @@ function advanceCursor(end) {
 }
 
 async function afterInsert(id, end, label) {
-    state.history.push({ id, cursor: { ...state.cursor } });
+    state.selection = id;
     advanceCursor(end);
     await refreshDoc();
     setStatus(
@@ -686,23 +906,157 @@ async function insertCross() {
     await afterInsert(result.id, end, "Cruzamento");
 }
 
+/* ------------------------------------------------------------------- tools */
+
+function setTool(tool) {
+    state.tool = tool;
+
+    document.querySelectorAll(".tool-button").forEach((button) => {
+        button.classList.toggle("active", button.dataset.tool === tool);
+    });
+
+    const canvas = el("canvas");
+    canvas.classList.remove("tool-select", "tool-line", "tool-bezier");
+    canvas.classList.add(`tool-${tool}`);
+
+    setStatus(`Ferramenta: ${TOOL_LABELS[tool] ?? tool}.`);
+}
+
+function bezierFromDrag(start, end, shift) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const nx = -dy / length;
+    const ny = dx / length;
+    const bow = Math.min(length * 0.25, 160) * (shift ? -1 : 1);
+
+    return {
+        p0: [start.x, start.y],
+        p1: [start.x + dx * 0.33 + nx * bow, start.y + dy * 0.33 + ny * bow],
+        p2: [start.x + dx * 0.66 + nx * bow, start.y + dy * 0.66 + ny * bow],
+        p3: [end.x, end.y],
+    };
+}
+
+async function requestSnap(point, ignore) {
+    const params = { point: [point.x, point.y], tolerance: 12, grid: 10 };
+    if (ignore != null) params.ignore = ignore;
+    return rpc("scene.snap", params);
+}
+
+function snappedPoint(result, fallback) {
+    if (!result || result.kind === "none" || !result.point) return fallback;
+    return { x: result.point[0], y: result.point[1] };
+}
+
+function translateLocal(id, delta) {
+    const element = state.doc?.elements?.find((candidate) => candidate.id === id);
+    if (!element) return;
+
+    const move = (point) => [point[0] + delta.x, point[1] + delta.y];
+
+    switch (element.type) {
+        case "line":
+            element.a = move(element.a);
+            element.b = move(element.b);
+            break;
+        case "cubic":
+            element.p0 = move(element.p0);
+            element.p1 = move(element.p1);
+            element.p2 = move(element.p2);
+            element.p3 = move(element.p3);
+            break;
+        case "arc":
+            element.center = move(element.center);
+            break;
+        case "module":
+            element.transform = element.transform ?? {};
+            element.transform.tx = (element.transform.tx ?? 0) + delta.x;
+            element.transform.ty = (element.transform.ty ?? 0) + delta.y;
+            break;
+        default:
+            break;
+    }
+}
+
+function queueMove(drag) {
+    const target = { ...drag.targetDelta };
+
+    drag.chain = drag.chain
+        .then(async () => {
+            const step = {
+                x: target.x - drag.applied.x,
+                y: target.y - drag.applied.y,
+            };
+            if (Math.abs(step.x) < 1e-9 && Math.abs(step.y) < 1e-9) return;
+
+            await rpc("doc.moveElement", {
+                id: drag.id,
+                delta: [step.x, step.y],
+                merge: drag.mergeKey,
+            });
+            drag.applied = target;
+            translateLocal(drag.id, step);
+            draw();
+        })
+        .catch((error) => {
+            setStatus(String(error.message ?? error));
+        });
+}
+
+/* -------------------------------------------------------------- interactions */
+
 async function undo() {
-    const entry = state.history.pop();
-    if (!entry) {
-        setStatus("Nada para desfazer.");
+    try {
+        const result = await rpc("doc.undo");
+        state.selection = null;
+        await refreshDoc();
+        setStatus(`Desfeito: ${result.label}.`);
+    } catch (error) {
+        if (String(error.message ?? error).startsWith("nothing_to_undo")) {
+            setStatus("Nada para desfazer.");
+        } else {
+            setStatus(String(error.message ?? error));
+        }
+    }
+}
+
+async function redo() {
+    try {
+        const result = await rpc("doc.redo");
+        state.selection = null;
+        await refreshDoc();
+        setStatus(`Refeito: ${result.label}.`);
+    } catch (error) {
+        if (String(error.message ?? error).startsWith("nothing_to_redo")) {
+            setStatus("Nada para refazer.");
+        } else {
+            setStatus(String(error.message ?? error));
+        }
+    }
+}
+
+async function deleteSelection() {
+    const id = state.selection;
+    if (id == null) {
+        setStatus("Selecione um elemento para excluir.");
         return;
     }
 
-    await rpc("doc.removeElement", { id: entry.id });
-    state.cursor = entry.cursor;
+    await rpc("doc.removeElement", { id });
+    state.selection = null;
     await refreshDoc();
-    setStatus(`Elemento ${entry.id} removido.`);
+    setStatus(`Elemento ${id} excluído.`);
 }
 
 async function newDocument() {
     await rpc("doc.new");
-    state.history = [];
+    state.selection = null;
     state.cursor = { x: 300, y: 300 };
+    state.snap = null;
+    state.drag = null;
+    resetView();
+    setTool("select");
     await refreshDoc();
     setStatus("Documento novo · arena 4 × 3 m.");
 }
@@ -724,16 +1078,21 @@ async function openDocument() {
     if (!path) return;
 
     await rpc("doc.load", { path });
-    state.history = [];
+    state.selection = null;
     state.cursor = { x: 300, y: 300 };
+    state.snap = null;
+    state.drag = null;
+    resetView();
+    setTool("select");
     await refreshDoc();
     setStatus(`Aberto: ${path}`);
 }
 
 async function setArena(width, height) {
     await rpc("doc.setArena", { width, height, margin: 100 });
-    state.history = [];
+    state.selection = null;
     state.cursor = { x: 300, y: 300 };
+    resetView();
     await refreshDoc();
     setStatus(`Arena ${formatMm(width)} × ${formatMm(height)}.`);
 }
@@ -746,13 +1105,243 @@ async function setLayer(key, visible) {
     updateFacts();
     draw();
 
-    const labels = {
-        track: "Traçado",
-        markers: "Marcadores",
-        annotations: "Anotações",
-        guides: "Guias",
+    setStatus(`Camada ${LAYER_LABELS[key] ?? key} ${visible ? "visível" : "oculta"}.`);
+}
+
+async function onPointerDown(event) {
+    const canvas = el("canvas");
+
+    if (event.button === 1 || (event.button === 0 && spaceDown)) {
+        event.preventDefault();
+        canvas.setPointerCapture(event.pointerId);
+        state.drag = {
+            mode: "pan",
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            startPan: { ...state.pan },
+        };
+        canvas.classList.add("panning");
+        return;
+    }
+
+    if (event.button !== 0) return;
+
+    const point = canvasToWorld(event);
+    if (!point) return;
+
+    canvas.setPointerCapture(event.pointerId);
+
+    if (state.tool === "line" || state.tool === "bezier") {
+        const drag = {
+            mode: "draw",
+            tool: state.tool,
+            start: point,
+            end: point,
+            shift: event.shiftKey,
+            pointerId: event.pointerId,
+            pending: 1,
+            ended: false,
+            ready: false,
+        };
+        state.drag = drag;
+
+        const result = await requestSnap(point, null);
+        drag.pending -= 1;
+        if (state.drag !== drag || drag.ended) return;
+
+        drag.start = snappedPoint(result, point);
+        drag.end = drag.start;
+        drag.ready = true;
+        state.snap = result?.kind !== "none" ? result : null;
+        draw();
+        setStatus("Arraste para desenhar · Esc cancela.");
+        return;
+    }
+
+    // Ferramenta de seleção: descobre o elemento sob o ponteiro.
+    const drag = {
+        mode: "pick",
+        startPoint: point,
+        pointerId: event.pointerId,
+        ended: false,
     };
-    setStatus(`Camada ${labels[key] ?? key} ${visible ? "visível" : "oculta"}.`);
+    state.drag = drag;
+
+    const tolerance = Math.max(6 / (state.view?.scale ?? 1), 1.5);
+    const pick = await rpc("scene.pick", {
+        point: [point.x, point.y],
+        tolerance,
+    });
+    if (state.drag !== drag) return;
+
+    if (pick.element != null) {
+        state.selection = pick.element;
+        updateSelectionPanel();
+
+        if (!drag.ended) {
+            const grab = pick.point ?? [point.x, point.y];
+            drag.mode = "move";
+            drag.id = pick.element;
+            drag.grabPoint = { x: grab[0], y: grab[1] };
+            drag.offset = { x: grab[0] - point.x, y: grab[1] - point.y };
+            drag.targetDelta = { x: 0, y: 0 };
+            drag.applied = { x: 0, y: 0 };
+            drag.mergeKey = `drag-${pick.element}-${Date.now()}`;
+            drag.chain = Promise.resolve();
+            drag.pending = 0;
+            canvas.classList.add("dragging");
+            draw();
+            setStatus(`Elemento ${pick.element} selecionado · arraste para mover.`);
+            return;
+        }
+
+        draw();
+        setStatus(`Elemento ${pick.element} selecionado.`);
+    } else {
+        state.selection = null;
+        updateSelectionPanel();
+        state.cursor = {
+            x: Math.round(point.x),
+            y: Math.round(point.y),
+        };
+        updateFacts();
+        draw();
+        setStatus(`Cursor em ${state.cursor.x}, ${state.cursor.y} mm.`);
+    }
+
+    state.drag = null;
+}
+
+async function onPointerMove(event) {
+    const drag = state.drag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    if (drag.mode === "pan") {
+        state.pan.x = drag.startPan.x + (event.clientX - drag.startX);
+        state.pan.y = drag.startPan.y + (event.clientY - drag.startY);
+        draw();
+        return;
+    }
+
+    if (drag.mode === "pick") return;
+
+    const point = canvasToWorld(event);
+    if (!point) return;
+
+    if (drag.mode === "move") {
+        drag.pending += 1;
+        const desired = { x: point.x + drag.offset.x, y: point.y + drag.offset.y };
+        const result = await requestSnap(desired, drag.id);
+        drag.pending -= 1;
+        if (state.drag !== drag || drag.ended) return;
+
+        const snapped = snappedPoint(result, desired);
+        state.snap = result?.kind !== "none" ? result : null;
+        drag.targetDelta = {
+            x: snapped.x - drag.grabPoint.x,
+            y: snapped.y - drag.grabPoint.y,
+        };
+        queueMove(drag);
+        draw();
+        return;
+    }
+
+    if (drag.mode === "draw") {
+        if (!drag.ready) return;
+
+        drag.pending += 1;
+        const result = await requestSnap(point, null);
+        drag.pending -= 1;
+        if (state.drag !== drag || drag.ended) return;
+
+        drag.end = snappedPoint(result, point);
+        drag.shift = event.shiftKey;
+        state.snap = result?.kind !== "none" ? result : null;
+        draw();
+    }
+}
+
+async function onPointerUp(event) {
+    const drag = state.drag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const canvas = el("canvas");
+
+    if (drag.mode === "pan") {
+        state.drag = null;
+        canvas.classList.remove("panning");
+        return;
+    }
+
+    if (drag.mode === "pick") {
+        // A seleção é finalizada quando a consulta de pick terminar.
+        drag.ended = true;
+        return;
+    }
+
+    if (drag.mode === "move") {
+        while (drag.pending > 0) await sleep(5);
+        drag.ended = true;
+        await drag.chain;
+        if (state.drag === drag) state.drag = null;
+        canvas.classList.remove("dragging");
+        state.snap = null;
+        await refreshDoc();
+        setStatus(`Elemento ${drag.id} movido.`);
+        return;
+    }
+
+    if (drag.mode === "draw") {
+        while (drag.pending > 0) await sleep(5);
+        drag.ended = true;
+
+        const start = drag.start;
+        const end = drag.end;
+        const shift = event.shiftKey || drag.shift;
+        state.drag = null;
+        state.snap = null;
+
+        const distance = Math.hypot(end.x - start.x, end.y - start.y);
+        if (distance < 5) {
+            draw();
+            setStatus("Arraste mais para criar o elemento.");
+            return;
+        }
+
+        if (drag.tool === "line") {
+            const result = await rpc("doc.addLine", {
+                a: [start.x, start.y],
+                b: [end.x, end.y],
+                width: 19,
+            });
+            state.selection = result.id;
+            await refreshDoc();
+            setStatus(`Reta ${result.id} criada.`);
+        } else {
+            const curve = bezierFromDrag(start, end, shift);
+            const result = await rpc("doc.addCubic", {
+                p0: curve.p0,
+                p1: curve.p1,
+                p2: curve.p2,
+                p3: curve.p3,
+                width: 19,
+            });
+            state.selection = result.id;
+            await refreshDoc();
+            setStatus(`Bézier ${result.id} criada.`);
+        }
+
+        state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
+        updateFacts();
+        draw();
+    }
+}
+
+function onWheel(event) {
+    event.preventDefault();
+    const factor = Math.exp(-event.deltaY * 0.0015);
+    zoomBy(factor, event.clientX, event.clientY);
 }
 
 /* ------------------------------------------------------------- interactions */
@@ -814,35 +1403,6 @@ function activateTab(name) {
     });
 }
 
-function canvasToWorld(event) {
-    const view = state.view;
-    if (!view) return null;
-
-    const rect = el("canvas").getBoundingClientRect();
-    return {
-        x: (event.clientX - rect.left - view.originX) / view.scale,
-        y: (event.clientY - rect.top - view.originY) / view.scale,
-    };
-}
-
-function handleCanvasClick(event) {
-    const point = canvasToWorld(event);
-    if (!point) return;
-
-    const arena = docArena();
-    if (point.x < 0 || point.x > arena.width || point.y < 0 || point.y > arena.height) {
-        return;
-    }
-
-    state.cursor = {
-        x: Math.round(point.x),
-        y: Math.round(point.y),
-    };
-    updateFacts();
-    draw();
-    setStatus(`Cursor em ${state.cursor.x}, ${state.cursor.y} mm.`);
-}
-
 async function runAction(action) {
     switch (action) {
         case "insert-line":
@@ -861,6 +1421,10 @@ async function runAction(action) {
             return insertCross();
         case "undo":
             return undo();
+        case "redo":
+            return redo();
+        case "delete":
+            return deleteSelection();
         case "new":
             return newDocument();
         case "open":
@@ -871,6 +1435,12 @@ async function runAction(action) {
             return setArena(4000, 3000);
         case "arena-3x4":
             return setArena(3000, 4000);
+        case "zoom-in":
+            return zoomBy(1.25);
+        case "zoom-out":
+            return zoomBy(0.8);
+        case "zoom-fit":
+            return resetView();
         case "ping":
             return measurePing();
         case "latency":
@@ -893,6 +1463,13 @@ async function init() {
             return;
         }
 
+        const tool = event.target.closest("[data-tool]");
+        if (tool) {
+            event.preventDefault();
+            setTool(tool.dataset.tool);
+            return;
+        }
+
         const actionElement = event.target.closest("[data-action]");
         if (!actionElement) return;
 
@@ -910,7 +1487,96 @@ async function init() {
         });
     });
 
-    el("canvas").addEventListener("click", handleCanvasClick);
+    const canvas = el("canvas");
+    canvas.addEventListener("pointerdown", (event) => {
+        onPointerDown(event).catch((error) => {
+            setStatus(String(error.message ?? error));
+        });
+    });
+    canvas.addEventListener("pointermove", (event) => {
+        onPointerMove(event).catch((error) => {
+            setStatus(String(error.message ?? error));
+        });
+    });
+    canvas.addEventListener("pointerup", (event) => {
+        onPointerUp(event).catch((error) => {
+            setStatus(String(error.message ?? error));
+        });
+    });
+    canvas.addEventListener("pointercancel", (event) => {
+        onPointerUp(event).catch((error) => {
+            setStatus(String(error.message ?? error));
+        });
+    });
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+    document.addEventListener("keydown", (event) => {
+        if (isTypingTarget(event.target)) return;
+
+        if (event.code === "Space") {
+            if (!event.target.closest?.("button")) spaceDown = true;
+            return;
+        }
+
+        if (event.ctrlKey || event.metaKey) {
+            const key = event.key.toLowerCase();
+            if (key === "z") {
+                event.preventDefault();
+                (event.shiftKey ? redo() : undo()).catch((error) => {
+                    setStatus(String(error.message ?? error));
+                });
+            } else if (key === "y") {
+                event.preventDefault();
+                redo().catch((error) => {
+                    setStatus(String(error.message ?? error));
+                });
+            }
+            return;
+        }
+
+        switch (event.key) {
+            case "Delete":
+            case "Backspace":
+                event.preventDefault();
+                deleteSelection().catch((error) => {
+                    setStatus(String(error.message ?? error));
+                });
+                break;
+            case "v":
+            case "V":
+                setTool("select");
+                break;
+            case "l":
+            case "L":
+                setTool("line");
+                break;
+            case "b":
+            case "B":
+                setTool("bezier");
+                break;
+            case "Escape":
+                state.snap = null;
+                if (state.drag) {
+                    state.drag.ended = true;
+                    state.drag = null;
+                    el("canvas").classList.remove("dragging", "panning");
+                    refreshDoc().catch(() => {});
+                } else {
+                    state.selection = null;
+                    updateSelectionPanel();
+                    setTool("select");
+                    draw();
+                }
+                break;
+            default:
+                break;
+        }
+    });
+
+    document.addEventListener("keyup", (event) => {
+        if (event.code === "Space") spaceDown = false;
+    });
 
     try {
         await waitForBridge();
@@ -923,6 +1589,7 @@ async function init() {
         el("latency").disabled = false;
 
         await refreshDoc();
+        setTool("select");
         syncLayerToggles();
         setStatus(`Pronto · ${info.name} ${info.version} · ${info.compiler}`);
     } catch (error) {

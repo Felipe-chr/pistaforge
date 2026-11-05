@@ -99,4 +99,14 @@ BBox Scene::bounds() const {
     return box;
 }
 
+bool layer_visible(const Scene& scene, LayerId layer) noexcept {
+    switch (layer) {
+        case LayerId::Track: return scene.layers.track;
+        case LayerId::Markers: return scene.layers.markers;
+        case LayerId::Annotations: return scene.layers.annotations;
+        case LayerId::Guides: return scene.layers.guides;
+    }
+    return true;
+}
+
 } // namespace pf
