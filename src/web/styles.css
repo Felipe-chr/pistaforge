@@ -279,6 +279,8 @@ body {
 
 .ribbon-panel.active {
     display: flex;
+    width: max-content;
+    min-width: 100%;
 }
 
 .ribbon-group {
@@ -287,6 +289,7 @@ body {
     padding: 2px 10px 0;
     border-right: 1px solid var(--line);
     min-width: 0;
+    flex: 0 0 auto;
 }
 
 .ribbon-group:last-child {
@@ -314,8 +317,9 @@ body {
     align-items: center;
     justify-content: center;
     gap: 3px;
-    min-width: 62px;
-    padding: 3px 6px 2px;
+    flex: 0 0 auto;
+    min-width: 54px;
+    padding: 3px 5px 2px;
     border: 1px solid transparent;
     border-radius: 5px;
     background: transparent;
@@ -351,8 +355,8 @@ body {
 }
 
 .ribbon-icon {
-    width: 42px;
-    height: 27px;
+    width: 36px;
+    height: 25px;
     color: #1e293b;
     stroke: currentColor;
     stroke-width: 2;
@@ -650,6 +654,6 @@ body {
     }
 
     .ribbon-button {
-        min-width: 56px;
+        min-width: 50px;
     }
 }

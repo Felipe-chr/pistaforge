@@ -579,6 +579,88 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                    return Json{{"id", id}};
                });
 
+    // Define (ou reposiciona) a marca de largada/chegada do circuito.
+    add_change(dispatcher, state, "doc.setStartFinish", "Definir largada/chegada",
+               [&state](const Json& params) {
+                   require_object(params);
+
+                   MarkerType type = MarkerType::StartFinish;
+                   if (params.contains("kind")) {
+                       const auto parsed = marker_type_from_string(string_param(params, "kind"));
+                       if (!parsed.has_value() || (*parsed != MarkerType::Start &&
+                                                   *parsed != MarkerType::Finish &&
+                                                   *parsed != MarkerType::StartFinish)) {
+                           fail("invalid_params",
+                                "Campo 'kind' deve ser 'start', 'finish' ou 'start_finish'.");
+                       }
+                       type = *parsed;
+                   }
+
+                   const Vec2 position{
+                       number_param(params, "x"),
+                       number_param(params, "y"),
+                   };
+                   const double angle =
+                       number_or(params, "angle", number_or(params, "angle_deg", 0.0)) *
+                       kDegToRad;
+
+                   const auto existing =
+                       std::find_if(state.scene.markers.begin(), state.scene.markers.end(),
+                                    [type](const Marker& marker) {
+                                        return marker.type == type;
+                                    });
+
+                   Marker* marker = nullptr;
+                   if (existing != state.scene.markers.end()) {
+                       marker = &*existing;
+                       marker->position = position;
+                       marker->angle = angle;
+                   } else {
+                       Marker created;
+                       created.id = state.scene.allocate_id();
+                       created.type = type;
+                       created.position = position;
+                       created.angle = angle;
+                       state.scene.markers.push_back(std::move(created));
+                       marker = &state.scene.markers.back();
+                   }
+
+                   return Json{
+                       {"id", marker->id},
+                       {"type", std::string{to_string(marker->type)}},
+                       {"x", marker->position.x},
+                       {"y", marker->position.y},
+                       {"angle", marker->angle / kDegToRad},
+                   };
+               });
+
+    add_change(dispatcher, state, "doc.clearStartFinish", "Remover largada/chegada",
+               [&state](const Json& params) {
+                   require_object(params);
+
+                   const auto matches = [](MarkerType type) {
+                       return type == MarkerType::Start || type == MarkerType::Finish ||
+                              type == MarkerType::StartFinish;
+                   };
+
+                   MarkerType type = MarkerType::StartFinish;
+                   const bool filter = params.contains("kind");
+                   if (filter) {
+                       const auto parsed = marker_type_from_string(string_param(params, "kind"));
+                       if (!parsed.has_value() || !matches(*parsed)) {
+                           fail("invalid_params",
+                                "Campo 'kind' deve ser 'start', 'finish' ou 'start_finish'.");
+                       }
+                       type = *parsed;
+                   }
+
+                   const std::size_t before = state.scene.markers.size();
+                   std::erase_if(state.scene.markers, [&](const Marker& marker) {
+                       return matches(marker.type) && (!filter || marker.type == type);
+                   });
+                   return Json{{"removed", before - state.scene.markers.size()}};
+               });
+
     add_change(dispatcher, state, "doc.moveElement", "Mover elemento",
                [&state](const Json& params) {
                    require_object(params);
@@ -842,6 +924,7 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
             result["direction"] = Json::array({snap.direction.x, snap.direction.y});
         } else if (snap.kind == SnapKind::Element) {
             result["element"] = snap.element;
+            result["direction"] = Json::array({snap.direction.x, snap.direction.y});
         }
         return result;
     });

@@ -75,6 +75,7 @@ SnapResult snap_point(const Scene& scene, Vec2 point, const SnapOptions& options
             best.point = closest;
             best.distance = candidate_distance;
             best.element = element.id;
+            best.direction = shape_tangent(element.shape, closest);
         }
 
         if (best.kind != SnapKind::None) return best;

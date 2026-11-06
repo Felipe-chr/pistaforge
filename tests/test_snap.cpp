@@ -60,6 +60,20 @@ TEST_CASE("Encaixe: cai na geometria quando não há porta perto") {
     CHECK(result.element == line);
     CHECK(result.port.empty());
     CHECK(result.distance == doctest::Approx(3.0));
+    CHECK(result.direction == Vec2{1.0, 0.0});
+}
+
+TEST_CASE("Encaixe: direção acompanha a tangente da geometria") {
+    Scene scene;
+    const ElementId vertical = scene.add_element(LineSegment{{100.0, 0.0}, {100.0, 200.0}}).id;
+
+    const SnapResult result = pf::snap_point(scene, {103.0, 50.0}, options_without_grid());
+
+    CHECK(result.kind == SnapKind::Element);
+    CHECK(result.element == vertical);
+    CHECK(result.point == Vec2{100.0, 50.0});
+    CHECK(result.direction.x == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(result.direction.y == doctest::Approx(1.0));
 }
 
 TEST_CASE("Encaixe: usa a grade quando nada está perto") {

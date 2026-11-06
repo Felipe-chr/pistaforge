@@ -7,6 +7,8 @@ namespace pf {
 std::string_view to_string(MarkerType type) noexcept {
     switch (type) {
         case MarkerType::StartFinish: return "start_finish";
+        case MarkerType::Start: return "start";
+        case MarkerType::Finish: return "finish";
         case MarkerType::DirectionArrow: return "direction_arrow";
         case MarkerType::Text: return "text";
     }
@@ -15,6 +17,8 @@ std::string_view to_string(MarkerType type) noexcept {
 
 std::optional<MarkerType> marker_type_from_string(std::string_view text) noexcept {
     if (text == "start_finish") return MarkerType::StartFinish;
+    if (text == "start") return MarkerType::Start;
+    if (text == "finish") return MarkerType::Finish;
     if (text == "direction_arrow") return MarkerType::DirectionArrow;
     if (text == "text") return MarkerType::Text;
     return std::nullopt;

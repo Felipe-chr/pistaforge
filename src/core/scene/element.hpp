@@ -52,6 +52,8 @@ struct Element {
 [[nodiscard]] BBox shape_bbox(const Shape& shape);
 [[nodiscard]] double shape_length(const Shape& shape);
 [[nodiscard]] Vec2 shape_closest_point(const Shape& shape, Vec2 point, double* t_out = nullptr);
+/// Tangente unitária no ponto mais próximo de `point` (para orientar marcas).
+[[nodiscard]] Vec2 shape_tangent(const Shape& shape, Vec2 point);
 [[nodiscard]] std::vector<Vec2> shape_flatten(const Shape& shape, double tolerance_mm);
 
 /// Translada a forma inteira por `delta` (mm), preservando orientação.

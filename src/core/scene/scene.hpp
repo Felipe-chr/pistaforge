@@ -18,7 +18,7 @@ struct Connection {
     PortRef b;
 };
 
-enum class MarkerType { StartFinish, DirectionArrow, Text };
+enum class MarkerType { StartFinish, Start, Finish, DirectionArrow, Text };
 
 [[nodiscard]] std::string_view to_string(MarkerType type) noexcept;
 [[nodiscard]] std::optional<MarkerType> marker_type_from_string(std::string_view text) noexcept;

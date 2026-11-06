@@ -148,6 +148,15 @@ TEST_CASE("Cena: helpers de forma") {
 
     const std::vector<Vec2> flattened = pf::shape_flatten(line, 0.01);
     CHECK(flattened.size() == 2);
+    CHECK(pf::shape_tangent(line, {50.0, 10.0}) == Vec2{1.0, 0.0});
+
+    const LineSegment vertical{{0.0, 0.0}, {0.0, 100.0}};
+    CHECK(pf::shape_tangent(vertical, {10.0, 50.0}) == Vec2{0.0, 1.0});
+
+    const pf::ArcSegment arc{{0.0, 0.0}, 100.0, 0.0, std::numbers::pi / 2.0};
+    const Vec2 arc_tangent = pf::shape_tangent(arc, {100.0, 0.0});
+    CHECK(arc_tangent.x == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(arc_tangent.y == doctest::Approx(1.0));
 
     ModuleInstance module;
     module.template_id = "curve.90";
@@ -178,9 +187,13 @@ TEST_CASE("Cena: conversão de camadas e marcadores") {
     CHECK_FALSE(pf::layer_from_string("inexistente").has_value());
 
     CHECK(pf::to_string(pf::MarkerType::StartFinish) == "start_finish");
+    CHECK(pf::to_string(pf::MarkerType::Start) == "start");
+    CHECK(pf::to_string(pf::MarkerType::Finish) == "finish");
     CHECK(pf::to_string(pf::MarkerType::DirectionArrow) == "direction_arrow");
     CHECK(pf::to_string(pf::MarkerType::Text) == "text");
     CHECK(pf::marker_type_from_string("start_finish") == pf::MarkerType::StartFinish);
+    CHECK(pf::marker_type_from_string("start") == pf::MarkerType::Start);
+    CHECK(pf::marker_type_from_string("finish") == pf::MarkerType::Finish);
     CHECK_FALSE(pf::marker_type_from_string("inexistente").has_value());
 }
 

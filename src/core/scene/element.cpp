@@ -132,6 +132,45 @@ Vec2 shape_closest_point(const Shape& shape, Vec2 point, double* t_out) {
         shape);
 }
 
+Vec2 shape_tangent(const Shape& shape, Vec2 point) {
+    return std::visit(
+        Overloaded{
+            [](const LineSegment& line) { return line.tangent(); },
+            [point](const ArcSegment& arc) {
+                double t = 0.0;
+                static_cast<void>(arc.closest_point(point, &t));
+                return arc.tangent_at(t).normalized();
+            },
+            [point](const CubicBezier& bezier) {
+                double t = 0.0;
+                static_cast<void>(bezier.closest_point(point, &t));
+                Vec2 tangent = bezier.derivative(t);
+                if (tangent.length_squared() <= kGeometryEpsilon) {
+                    const double before = std::max(0.0, t - 1e-3);
+                    const double after = std::min(1.0, t + 1e-3);
+                    tangent = bezier.eval(after) - bezier.eval(before);
+                }
+                return tangent.normalized();
+            },
+            [point](const ModuleInstance& module) {
+                Vec2 best{};
+                double best_distance = std::numeric_limits<double>::max();
+                for (const auto& [a, b] : module_local_segments(module)) {
+                    const Vec2 start = module.transform.apply(a);
+                    const Vec2 end = module.transform.apply(b);
+                    const Vec2 candidate = LineSegment{start, end}.closest_point(point);
+                    const double candidate_distance = distance_squared(candidate, point);
+                    if (candidate_distance < best_distance) {
+                        best_distance = candidate_distance;
+                        best = (end - start).normalized();
+                    }
+                }
+                return best;
+            },
+        },
+        shape);
+}
+
 std::vector<Vec2> shape_flatten(const Shape& shape, double tolerance_mm) {
     return std::visit(
         Overloaded{

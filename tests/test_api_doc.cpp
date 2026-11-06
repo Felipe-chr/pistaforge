@@ -308,6 +308,53 @@ TEST_CASE("API: arena e marcadores") {
     CHECK(state["result"]["markers"][0]["text"] == "largada");
 }
 
+TEST_CASE("API: largada e chegada do circuito") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const json start = api.call(
+        R"({"id":2,"method":"doc.setStartFinish","params":{"kind":"start","x":100,"y":200,"angle":90}})");
+    REQUIRE(start["ok"].get<bool>());
+    CHECK(start["result"]["type"] == "start");
+    CHECK(start["result"]["x"] == 100.0);
+    CHECK(start["result"]["y"] == 200.0);
+    CHECK(start["result"]["angle"] == doctest::Approx(90.0));
+
+    const json finish = api.call(
+        R"({"id":3,"method":"doc.setStartFinish","params":{"kind":"finish","x":900,"y":200,"angle":90}})");
+    REQUIRE(finish["ok"].get<bool>());
+
+    // Reposicionar a largada não duplica a marca.
+    const json moved = api.call(
+        R"({"id":4,"method":"doc.setStartFinish","params":{"kind":"start","x":120,"y":210,"angle":45}})");
+    REQUIRE(moved["ok"].get<bool>());
+
+    json state = api.call(R"({"id":5,"method":"doc.state"})");
+    REQUIRE(state["result"]["markers"].size() == 2);
+    CHECK(state["result"]["markers"][0]["type"] == "start");
+    CHECK(state["result"]["markers"][0]["x"] == 120.0);
+    CHECK(state["result"]["markers"][1]["type"] == "finish");
+
+    const json cleared = api.call(
+        R"({"id":6,"method":"doc.clearStartFinish","params":{"kind":"finish"}})");
+    REQUIRE(cleared["ok"].get<bool>());
+    CHECK(cleared["result"]["removed"] == 1);
+
+    state = api.call(R"({"id":7,"method":"doc.state"})");
+    REQUIRE(state["result"]["markers"].size() == 1);
+    CHECK(state["result"]["markers"][0]["type"] == "start");
+
+    const json cleared_all = api.call(
+        R"({"id":8,"method":"doc.clearStartFinish","params":{}})");
+    REQUIRE(cleared_all["ok"].get<bool>());
+    CHECK(cleared_all["result"]["removed"] == 1);
+
+    const json bad = api.call(
+        R"({"id":9,"method":"doc.setStartFinish","params":{"kind":"direction_arrow","x":0,"y":0}})");
+    CHECK_FALSE(bad["ok"].get<bool>());
+    CHECK(bad["error"]["code"] == "invalid_params");
+}
+
 TEST_CASE("API: visibilidade de camadas") {
     Api api;
     api.call(R"({"id":1,"method":"doc.new"})");

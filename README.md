@@ -27,7 +27,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
       **Exibir**), ícones SVG de curvas e inserção real de elementos
 - [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo nativo
       do Windows para abrir/salvar (com fallback em `<dialog>`)
-- [x] Testes com doctest e alvo `pf_tests` — 88 casos / 1479 asserções
+- [x] Testes com doctest e alvo `pf_tests` — 90 casos / 1512 asserções
 - [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
 - [x] Editor MVP com canvas interativo (M2)
@@ -36,6 +36,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
   - [x] Encaixe com prioridade **porta > elemento > grade** e indicador visual
   - [x] Desfazer/refazer com histórico de instantâneos e arrastos agrupados
   - [x] Zoom pela roda do mouse, pan com botão do meio ou `Espaço` + arrasto
+  - [x] Arrastar em área vazia com o botão esquerdo também desloca a arena
 - [x] Inserção por posicionamento com o mouse (M3)
   - [x] Primeiro clique ancora, movimento do mouse dimensiona/orienta e o
         segundo clique confirma; `Esc` cancela
@@ -43,6 +44,9 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
   - [x] Alças de edição para retas e Béziers (extremos e pontos de controle)
   - [x] Diálogos nativos de arquivo (`GetOpenFileNameW` / `GetSaveFileNameW`)
   - [x] **Salvar como** na faixa e abertura direta na última pasta usada
+  - [x] Largada e chegada do circuito com faixa quadriculada perpendicular à pista
+  - [x] Ímã de pontas: ao aproximar uma extremidade de uma porta existente, o
+        encaixe trava e a conexão é criada automaticamente
 
 ### API de documento e cena
 
@@ -68,6 +72,8 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.connect` | `{a:[id,port],b:[id,port]}` | `{id,rev}` |
 | `doc.disconnect` | `{id}` | `{rev,removed}` |
 | `doc.addMarker` | `{type,x,y,angle?,text?}` | `{id,rev}` |
+| `doc.setStartFinish` | `{kind?:start\|finish\|start_finish,x,y,angle?}` | `{id,type,x,y,angle,rev}` |
+| `doc.clearStartFinish` | `{kind?}` | `{removed,rev}` |
 | `doc.setArena` | `{name?,width?,height?,margin?}` | `{rev,arena}` |
 | `doc.setLayers` | `{track?,markers?,annotations?,guides?}` | `{layers,rev}` |
 | `scene.ports` | `{}` | lista de portas |
@@ -78,8 +84,10 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 
 `merge` agrupa alterações contínuas (arrastos) em um único passo de desfazer.
 `scene.snap` devolve `kind` = `port`, `element`, `grid` ou `none`; o encaixe tenta
-as portas primeiro, depois o corpo dos elementos e por último a grade. Em
-`scene.snap`, `grid` é o passo em mm e `snap_grid` liga/desliga o encaixe na grade.
+as portas primeiro, depois o corpo dos elementos e por último a grade. Para
+`port` e `element`, `direction` traz a tangente unitária no ponto encaixado
+(usada para orientar a faixa de largada/chegada). Em `scene.snap`, `grid` é o
+passo em mm e `snap_grid` liga/desliga o encaixe na grade.
 
 Ângulos são gravados em **graus** no JSON (`start`/`sweep` para arcos, `rot` para
 módulos e `angle` para marcadores) e usados em **radianos** no núcleo. A API e o
@@ -92,8 +100,9 @@ A janela é dividida em quatro áreas:
 
 - **Faixa (ribbon)** no topo, com abas:
   - **Inserir** — ferramentas (selecionar, reta, Bézier), formas, curvas
-    (arco 90°, curva 90°, 180°, curva S), cruzamento 90° e edição (desfazer,
-    refazer, excluir, novo).
+    (arco 90°, curva 90°, 180°, curva S), cruzamento 90°, **Circuito**
+    (largada, chegada e remover marcas) e edição (desfazer, refazer, excluir,
+    novo).
   - **Documento** — novo, abrir, salvar, salvar como e presets de arena
     (4 × 3 m e 3 × 4 m).
   - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias.
@@ -121,7 +130,10 @@ entrada; a geometria é criada no núcleo C++ via `doc.*`.
 | Desenhar Bézier | ferramenta **Bézier** (`B`) e arrastar (com `Shift` para inverter a curvatura) |
 | Desfazer / refazer | `Ctrl+Z` / `Ctrl+Y` |
 | Zoom | roda do mouse (ancorado no ponteiro) ou botões **Aproximar/Afastar/Ajustar** |
-| Pan | botão do meio arrastando ou `Espaço` + arrasto |
+| Pan | botão do meio arrastando, `Espaço` + arrasto ou arrastar em área vazia com o botão esquerdo |
+| Largada / chegada | **Inserir → Circuito → Largada/Chegada** e clique sobre a pista |
+| Remover largada/chegada | **Inserir → Circuito → Remover** |
+| Ímã de pontas | ao posicionar ou desenhar, aproxime a ponta de uma porta existente: ela trava e conecta sozinha |
 | Cancelar | `Esc` (posicionamento, arrasto ou seleção) |
 
 O arrasto contínuo gera uma única entrada de desfazer (mesma chave `merge`).

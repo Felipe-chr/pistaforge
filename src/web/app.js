@@ -395,14 +395,78 @@ function drawElements(ctx, doc, layers, scale) {
     }
 }
 
+function markerBandSize(scale) {
+    return {
+        length: Math.max(24, 19 * scale + 10),
+        thickness: Math.max(5, 3 * scale),
+    };
+}
+
+function drawCheckeredBand(ctx, x, y, angleRad, lengthPx, thicknessPx) {
+    const columns = Math.max(4, Math.round(lengthPx / 8));
+    const rows = 2;
+    const cellW = lengthPx / columns;
+    const cellH = thicknessPx / rows;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angleRad);
+    for (let row = 0; row < rows; ++row) {
+        for (let column = 0; column < columns; ++column) {
+            ctx.fillStyle = (row + column) % 2 === 0 ? "#0f172a" : "#ffffff";
+            ctx.fillRect(
+                -lengthPx / 2 + column * cellW,
+                -thicknessPx / 2 + row * cellH,
+                cellW + 0.5,
+                cellH + 0.5
+            );
+        }
+    }
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.85)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-lengthPx / 2, -thicknessPx / 2, lengthPx, thicknessPx);
+    ctx.restore();
+}
+
 function drawMarkers(ctx, doc, layers) {
     if (layers.markers === false) return;
 
+    const scale = state.view?.scale ?? 1;
+    const band = markerBandSize(scale);
+
     for (const marker of doc.markers ?? []) {
+        const type = marker.type ?? "start_finish";
         const p = worldToScreen({ x: marker.x ?? 0, y: marker.y ?? 0 });
+        const angle = ((marker.angle ?? 0) * Math.PI) / 180;
+
+        if (type === "start" || type === "finish" || type === "start_finish") {
+            drawCheckeredBand(ctx, p.x, p.y, angle, band.length, band.thickness);
+
+            const accent =
+                type === "start" ? "#15803d" : type === "finish" ? "#b91c1c" : "#1d4ed8";
+            const label =
+                type === "start"
+                    ? "LARGADA"
+                    : type === "finish"
+                      ? "CHEGADA"
+                      : "LARGADA / CHEGADA";
+
+            ctx.save();
+            ctx.fillStyle = accent;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.font = '700 10px "Segoe UI", sans-serif';
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, p.x + 10, p.y - 12);
+            ctx.restore();
+            continue;
+        }
+
         ctx.save();
         ctx.translate(p.x, p.y);
-        ctx.rotate(((marker.angle ?? 0) * Math.PI) / 180);
+        ctx.rotate(angle);
         ctx.fillStyle = "#dc2626";
         ctx.beginPath();
         ctx.moveTo(0, -6);
@@ -479,7 +543,7 @@ function snapColor(kind) {
 }
 
 function snapLabel(kind) {
-    if (kind === "port") return "porta";
+    if (kind === "port") return "conectar";
     if (kind === "element") return "traçado";
     return "grade";
 }
@@ -498,6 +562,13 @@ function drawSnapIndicator(ctx) {
     ctx.beginPath();
     ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
     ctx.stroke();
+
+    if (snap.kind === "port") {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
     ctx.beginPath();
     ctx.moveTo(p.x - 12, p.y);
     ctx.lineTo(p.x - 8, p.y);
@@ -547,7 +618,29 @@ function drawPreview(ctx) {
 
 function drawPlacement(ctx) {
     const placement = state.placement;
-    if (!placement || !placement.start) return;
+    if (!placement) return;
+
+    if (placement.kind === "start" || placement.kind === "finish") {
+        const anchor = placement.start ?? placement.end;
+        if (!anchor) return;
+
+        const scale = state.view?.scale ?? 1;
+        const p = worldToScreen(anchor);
+        const angle = ((placement.angle ?? 90) * Math.PI) / 180;
+        const band = markerBandSize(scale);
+        drawCheckeredBand(ctx, p.x, p.y, angle, band.length, band.thickness);
+
+        ctx.save();
+        ctx.fillStyle = placement.kind === "start" ? "#15803d" : "#b91c1c";
+        ctx.font = '700 10px "Segoe UI", sans-serif';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(placement.label, p.x + 10, p.y - 14);
+        ctx.restore();
+        return;
+    }
+
+    if (!placement.start) return;
 
     const end = placement.end ?? placement.start;
     const geometry = placementGeometry(
@@ -965,6 +1058,10 @@ function sCurveFromDrag(start, end, shift) {
 
 /// Prévia geométrica da forma em posicionamento (sem tocar no documento).
 function placementGeometry(kind, start, end, shift) {
+    if (kind === "start" || kind === "finish") {
+        return { polylines: [], valid: true, distance: 0 };
+    }
+
     const distance = Math.hypot(end.x - start.x, end.y - start.y);
     if (distance < 1e-6) {
         return { polylines: [], valid: false, distance };
@@ -1041,16 +1138,32 @@ function placementGeometry(kind, start, end, shift) {
     }
 }
 
-function startPlacement(kind, label) {
+function startPlacement(kind, label, options = {}) {
     setTool("select");
-    state.placement = { kind, label, start: null, end: null, shift: false, seq: 0, busy: false };
+    state.placement = {
+        kind,
+        label,
+        start: null,
+        end: null,
+        shift: false,
+        seq: 0,
+        busy: false,
+        single: Boolean(options.single),
+        angle: 90,
+        startPort: null,
+        endPort: null,
+    };
     state.selection = null;
     state.snap = null;
     state.drag = null;
     el("canvas").classList.add("placing");
     updateSelectionPanel();
     draw();
-    setStatus(`Inserir ${label}: clique na arena para posicionar · Esc cancela.`);
+    setStatus(
+        options.single
+            ? `${label}: clique sobre a pista para posicionar · Esc cancela.`
+            : `Inserir ${label}: clique na arena para posicionar · Esc cancela.`
+    );
 }
 
 function cancelPlacement(message) {
@@ -1065,6 +1178,28 @@ function cancelPlacement(message) {
 
 async function commitPlacement(placement) {
     const { kind, start, end, shift } = placement;
+
+    if (kind === "start" || kind === "finish") {
+        await rpc("doc.setStartFinish", {
+            kind,
+            x: start.x,
+            y: start.y,
+            angle: placement.angle ?? 90,
+        });
+
+        state.placement = null;
+        state.snap = null;
+        el("canvas").classList.remove("placing");
+        state.selection = null;
+        state.cursor = { x: Math.round(start.x), y: Math.round(start.y) };
+        await refreshDoc();
+        setStatus(
+            `${placement.label} definida em ${Math.round(start.x)}, ` +
+                `${Math.round(start.y)} mm.`
+        );
+        return;
+    }
+
     const geometry = placementGeometry(kind, start, end, shift);
     if (!geometry.valid) {
         setStatus("Arraste mais para definir o tamanho do elemento.");
@@ -1131,6 +1266,13 @@ async function commitPlacement(placement) {
             return;
     }
 
+    const connected = await connectEndpoints(
+        result.id,
+        kind,
+        placement.startPort,
+        placement.endPort
+    );
+
     state.placement = null;
     state.snap = null;
     el("canvas").classList.remove("placing");
@@ -1138,8 +1280,10 @@ async function commitPlacement(placement) {
     state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
     await refreshDoc();
     setStatus(
-        `Elemento ${result.id} (${placement.label}) inserido · ` +
-            "arraste as alças para ajustar."
+        `Elemento ${result.id} (${placement.label}) inserido` +
+            (connected > 0
+                ? ` · ${connected} conexão(ões) automática(s).`
+                : " · arraste as alças para ajustar.")
     );
 }
 
@@ -1169,6 +1313,24 @@ function insertS() {
 
 function insertCross() {
     startPlacement("cross", "Cruzamento 90°");
+}
+
+function insertStart() {
+    startPlacement("start", "Largada", { single: true });
+}
+
+function insertFinish() {
+    startPlacement("finish", "Chegada", { single: true });
+}
+
+async function clearStartFinish() {
+    const result = await rpc("doc.clearStartFinish", {});
+    await refreshDoc();
+    setStatus(
+        result.removed > 0
+            ? `Marcas de circuito removidas (${result.removed}).`
+            : "Nenhuma marca de circuito para remover."
+    );
 }
 /* ------------------------------------------------------------------- tools */
 
@@ -1208,8 +1370,66 @@ function bezierFromDrag(start, end, shift) {
     };
 }
 
+function portRef(result) {
+    if (!result || result.kind !== "port") return null;
+    if (result.element == null || !result.port) return null;
+    return { element: result.element, port: result.port };
+}
+
+/// Ângulo (graus) da faixa de largada/chegada: perpendicular à tangente da pista.
+function markerAngleDeg(result) {
+    const direction = result?.direction;
+    if (
+        Array.isArray(direction) &&
+        Math.hypot(direction[0] ?? 0, direction[1] ?? 0) > 1e-9
+    ) {
+        return (Math.atan2(direction[1], direction[0]) * 180) / Math.PI + 90;
+    }
+    return 90;
+}
+
+function connectionPortNames(kind) {
+    if (kind === "cross") return null;
+    if (kind === "curve90") return { start: "in", end: "out" };
+    return { start: "start", end: "end" };
+}
+
+/// Conecta as pontas do elemento recém-criado às portas magnéticas usadas.
+async function connectEndpoints(createdId, kind, startPort, endPort) {
+    const names = connectionPortNames(kind);
+    if (!names || createdId == null) return 0;
+
+    const pairs = [
+        [startPort, names.start],
+        [endPort, names.end],
+    ];
+
+    let connected = 0;
+    for (const [existing, port] of pairs) {
+        if (!existing || existing.element === createdId) continue;
+        try {
+            await rpc("doc.connect", {
+                a: [existing.element, existing.port],
+                b: [createdId, port],
+            });
+            connected += 1;
+        } catch (error) {
+            const text = String(error.message ?? error);
+            if (!text.startsWith("port_in_use")) {
+                setStatus(`Conexão automática falhou: ${text}`);
+            }
+        }
+    }
+    return connected;
+}
+
 async function requestSnap(point, ignore) {
-    const params = { point: [point.x, point.y], tolerance: 12, grid: 10 };
+    const scale = state.view?.scale ?? 1;
+    const params = {
+        point: [point.x, point.y],
+        tolerance: Math.max(10 / scale, 6),
+        grid: 10,
+    };
     if (ignore != null) params.ignore = ignore;
     return rpc("scene.snap", params);
 }
@@ -1471,10 +1691,19 @@ async function onPointerDown(event) {
             const snapped = snappedPoint(result, point);
             state.snap = result?.kind !== "none" ? result : null;
 
+            if (placement.single) {
+                placement.start = snapped;
+                placement.end = snapped;
+                placement.angle = markerAngleDeg(result);
+                await commitPlacement(placement);
+                return;
+            }
+
             if (!placement.start) {
                 placement.start = snapped;
                 placement.end = snapped;
                 placement.shift = event.shiftKey;
+                placement.startPort = portRef(result);
                 state.cursor = {
                     x: Math.round(snapped.x),
                     y: Math.round(snapped.y),
@@ -1482,14 +1711,16 @@ async function onPointerDown(event) {
                 updateFacts();
                 draw();
                 setStatus(
-                    `${placement.label}: mova o mouse para dimensionar · ` +
-                        "clique para confirmar · Esc cancela."
+                    `${placement.label}: mova o mouse para dimensionar` +
+                        (placement.startPort ? " · porta magnética travada" : "") +
+                        " · clique para confirmar · Esc cancela."
                 );
                 return;
             }
 
             placement.end = snapped;
             placement.shift = event.shiftKey;
+            placement.endPort = portRef(result);
             await commitPlacement(placement);
         } finally {
             placement.busy = false;
@@ -1510,6 +1741,8 @@ async function onPointerDown(event) {
             pending: 1,
             ended: false,
             ready: false,
+            startPort: null,
+            endPort: null,
         };
         state.drag = drag;
 
@@ -1519,6 +1752,7 @@ async function onPointerDown(event) {
 
         drag.start = snappedPoint(result, point);
         drag.end = drag.start;
+        drag.startPort = portRef(result);
         drag.ready = true;
         state.snap = result?.kind !== "none" ? result : null;
         draw();
@@ -1556,6 +1790,9 @@ async function onPointerDown(event) {
         startPoint: point,
         pointerId: event.pointerId,
         ended: false,
+        startX: event.clientX,
+        startY: event.clientY,
+        startPan: { ...state.pan },
     };
     state.drag = drag;
 
@@ -1597,8 +1834,20 @@ async function onPointerDown(event) {
             y: Math.round(point.y),
         };
         updateFacts();
+
+        if (drag.ended) {
+            state.drag = null;
+            draw();
+            setStatus(`Cursor em ${state.cursor.x}, ${state.cursor.y} mm.`);
+            return;
+        }
+
+        // Arrastar em área vazia desloca a arena (pan).
+        drag.mode = "pan";
+        canvas.classList.add("panning");
         draw();
-        setStatus(`Cursor em ${state.cursor.x}, ${state.cursor.y} mm.`);
+        setStatus("Arraste para deslocar a arena · solte para parar.");
+        return;
     }
 
     state.drag = null;
@@ -1617,7 +1866,14 @@ async function onPointerMove(event) {
 
         const snapped = snappedPoint(result, point);
         state.snap = result?.kind !== "none" ? result : null;
-        if (placement.start) placement.end = snapped;
+        if (placement.single) {
+            placement.start = snapped;
+            placement.end = snapped;
+            placement.angle = markerAngleDeg(result);
+        } else if (placement.start) {
+            placement.end = snapped;
+            placement.endPort = portRef(result);
+        }
         state.cursor = { x: Math.round(snapped.x), y: Math.round(snapped.y) };
         updateFacts();
         draw();
@@ -1679,6 +1935,7 @@ async function onPointerMove(event) {
         if (state.drag !== drag || drag.ended) return;
 
         drag.end = snappedPoint(result, point);
+        drag.endPort = portRef(result);
         drag.shift = event.shiftKey;
         state.snap = result?.kind !== "none" ? result : null;
         draw();
@@ -1692,8 +1949,15 @@ async function onPointerUp(event) {
     const canvas = el("canvas");
 
     if (drag.mode === "pan") {
+        const moved = Math.hypot(
+            state.pan.x - drag.startPan.x,
+            state.pan.y - drag.startPan.y
+        );
         state.drag = null;
         canvas.classList.remove("panning");
+        if (moved > 1) {
+            setStatus("Arena deslocada · use Ajustar para centralizar.");
+        }
         return;
     }
 
@@ -1759,12 +2023,14 @@ async function onPointerUp(event) {
             return;
         }
 
+        let createdId = null;
         if (drag.tool === "line") {
             const result = await rpc("doc.addLine", {
                 a: [start.x, start.y],
                 b: [end.x, end.y],
                 width: 19,
             });
+            createdId = result.id;
             state.selection = result.id;
             await refreshDoc();
             setStatus(`Reta ${result.id} criada.`);
@@ -1777,9 +2043,23 @@ async function onPointerUp(event) {
                 p3: curve.p3,
                 width: 19,
             });
+            createdId = result.id;
             state.selection = result.id;
             await refreshDoc();
             setStatus(`Bézier ${result.id} criada.`);
+        }
+
+        const connected = await connectEndpoints(
+            createdId,
+            drag.tool === "line" ? "line" : "bezier",
+            drag.startPort,
+            drag.endPort
+        );
+        if (connected > 0) {
+            await refreshDoc();
+            setStatus(
+                `Elemento ${createdId} criado · ${connected} conexão(ões) automática(s).`
+            );
         }
 
         state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
@@ -1869,6 +2149,12 @@ async function runAction(action) {
             return insertS();
         case "insert-cross":
             return insertCross();
+        case "insert-start":
+            return insertStart();
+        case "insert-finish":
+            return insertFinish();
+        case "clear-start-finish":
+            return clearStartFinish();
         case "undo":
             return undo();
         case "redo":
