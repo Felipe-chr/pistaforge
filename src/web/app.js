@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const state = {
     info: null,
@@ -15,6 +15,7 @@ const state = {
     pan: { x: 0, y: 0 },
     drag: null,
     snap: null,
+    placement: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -211,7 +212,8 @@ function updateSelectionPanel() {
     el("selection-type").textContent = typeLabels[element.type] ?? element.type;
     el("selection-layer").textContent = LAYER_LABELS[element.layer] ?? element.layer;
     el("selection-width").textContent = formatMm(element.width ?? 19);
-    el("selection-hint").textContent = "Arraste para mover · Del para excluir.";
+    el("selection-hint").textContent =
+        "Arraste as alças para editar a geometria · arraste o traçado para mover · Del exclui.";
 }
 
 /* ----------------------------------------------------------------- canvas */
@@ -435,7 +437,7 @@ function drawGuides(ctx, doc, layers) {
 }
 
 function drawCursor(ctx) {
-    if (state.drag) return;
+    if (state.drag || state.placement) return;
 
     const p = worldToScreen(state.cursor);
     ctx.save();
@@ -540,6 +542,147 @@ function drawPreview(ctx) {
         ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
         ctx.fill();
     }
+    ctx.restore();
+}
+
+function drawPlacement(ctx) {
+    const placement = state.placement;
+    if (!placement || !placement.start) return;
+
+    const end = placement.end ?? placement.start;
+    const geometry = placementGeometry(
+        placement.kind,
+        placement.start,
+        end,
+        placement.shift
+    );
+
+    ctx.save();
+    if (geometry.polylines.length > 0) {
+        ctx.strokeStyle = "rgba(37, 99, 235, 0.28)";
+        ctx.lineWidth = Math.max(4, 19 * (state.view?.scale ?? 1));
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        for (const points of geometry.polylines) {
+            if (tracePolyline(ctx, points)) ctx.stroke();
+        }
+
+        ctx.strokeStyle = "#2563eb";
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([6, 4]);
+        for (const points of geometry.polylines) {
+            if (tracePolyline(ctx, points)) ctx.stroke();
+        }
+        ctx.setLineDash([]);
+    }
+
+    const anchor = worldToScreen(placement.start);
+    ctx.fillStyle = "#1d4ed8";
+    ctx.beginPath();
+    ctx.arc(anchor.x, anchor.y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (placement.end) {
+        const tip = worldToScreen(placement.end);
+        ctx.beginPath();
+        ctx.arc(tip.x, tip.y, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#1e293b";
+        ctx.font = '600 11px "Cascadia Mono", Consolas, monospace';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(`${Math.round(geometry.distance)} mm`, tip.x + 10, tip.y - 8);
+    }
+
+    ctx.restore();
+}
+
+function elementHandles(element) {
+    if (!element) return [];
+    if (element.type === "line") {
+        return [
+            { key: "a", point: element.a, kind: "endpoint" },
+            { key: "b", point: element.b, kind: "endpoint" },
+        ];
+    }
+    if (element.type === "cubic") {
+        return [
+            { key: "p0", point: element.p0, kind: "endpoint" },
+            { key: "p1", point: element.p1, kind: "control" },
+            { key: "p2", point: element.p2, kind: "control" },
+            { key: "p3", point: element.p3, kind: "endpoint" },
+        ];
+    }
+    return [];
+}
+
+function handleAtPoint(point) {
+    if (state.selection == null) return null;
+    const element = state.doc?.elements?.find(
+        (candidate) => candidate.id === state.selection
+    );
+    const handles = elementHandles(element);
+    if (handles.length === 0) return null;
+
+    const tolerance = Math.max(8 / (state.view?.scale ?? 1), 1.5);
+    let best = null;
+    for (const handle of handles) {
+        const distance = Math.hypot(
+            point.x - handle.point[0],
+            point.y - handle.point[1]
+        );
+        if (distance <= tolerance && (!best || distance < best.distance)) {
+            best = { ...handle, distance };
+        }
+    }
+    return best;
+}
+
+function drawHandles(ctx) {
+    if (state.placement) return;
+
+    const element = state.doc?.elements?.find(
+        (candidate) => candidate.id === state.selection
+    );
+    const handles = elementHandles(element);
+    if (handles.length === 0) return;
+
+    ctx.save();
+
+    if (element.type === "cubic") {
+        ctx.strokeStyle = "rgba(37, 99, 235, 0.5)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        for (const [from, to] of [
+            [element.p0, element.p1],
+            [element.p2, element.p3],
+        ]) {
+            if (tracePolyline(ctx, [from, to])) ctx.stroke();
+        }
+        ctx.setLineDash([]);
+    }
+
+    for (const handle of handles) {
+        const p = worldToScreen({ x: handle.point[0], y: handle.point[1] });
+        ctx.beginPath();
+        if (handle.kind === "control") {
+            ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+            ctx.fillStyle = "#ffffff";
+            ctx.fill();
+            ctx.strokeStyle = "#2563eb";
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+        } else {
+            ctx.rect(p.x - 4.5, p.y - 4.5, 9, 9);
+            ctx.fillStyle = "#ffffff";
+            ctx.fill();
+            ctx.strokeStyle = "#1d4ed8";
+            ctx.lineWidth = 1.8;
+            ctx.stroke();
+        }
+    }
+
     ctx.restore();
 }
 
@@ -688,7 +831,9 @@ function draw() {
     }
 
     drawCursor(ctx);
+    drawHandles(ctx);
     drawPreview(ctx);
+    drawPlacement(ctx);
     drawSnapIndicator(ctx);
 
     // Aviso de área vazia.
@@ -755,160 +900,285 @@ function resetView() {
 
 /* --------------------------------------------------------------- insertion */
 
-function fitCursor(dx, dy, up = 0) {
-    const arena = docArena();
-    const fits =
-        state.cursor.x + dx <= arena.width - 40 &&
-        state.cursor.y + dy <= arena.height - 40 &&
-        state.cursor.y - up >= 40;
-    if (fits) return;
+/// Arco de 90° entre dois pontos: o centro fica ao lado da corda e o
+/// deslocamento do mouse define o raio (corda = raio × √2).
+function quarterArc(start, end, flip) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const chord = Math.hypot(dx, dy);
+    if (chord < 1e-6) return null;
 
-    let y = state.cursor.y + 320;
-    if (y + dy > arena.height - 40) y = 300;
-    state.cursor = { x: 300, y };
+    const side = flip ? -1 : 1;
+    const center = {
+        x: (start.x + end.x) / 2 - (dy / 2) * side,
+        y: (start.y + end.y) / 2 + (dx / 2) * side,
+    };
+    const radius = chord / Math.SQRT2;
+    const a0 = Math.atan2(start.y - center.y, start.x - center.x);
+    const a1 = Math.atan2(end.y - center.y, end.x - center.x);
+    let sweep = ((a1 - a0) * 180) / Math.PI;
+    while (sweep > 180) sweep -= 360;
+    while (sweep <= -180) sweep += 360;
+    if (Math.abs(sweep) < 1) return null;
+
+    return {
+        center,
+        radius,
+        start_deg: (a0 * 180) / Math.PI,
+        sweep_deg: sweep > 0 ? 90 : -90,
+    };
 }
 
-function advanceCursor(end) {
-    const arena = docArena();
-    let x = end.x;
-    let y = end.y;
+/// Semicírculo entre dois pontos (diâmetro = corda).
+function halfArc(start, end, flip) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const chord = Math.hypot(dx, dy);
+    if (chord < 1e-6) return null;
 
-    if (x > arena.width - 40 || y > arena.height - 40) {
-        x = 300;
-        y += 320;
-        if (y > arena.height - 40) y = 300;
+    const center = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const a0 = Math.atan2(start.y - center.y, start.x - center.x);
+    return {
+        center,
+        radius: chord / 2,
+        start_deg: (a0 * 180) / Math.PI,
+        sweep_deg: flip ? -180 : 180,
+    };
+}
+
+/// Curva em S: os dois pontos de controle ficam em lados opostos da corda.
+function sCurveFromDrag(start, end, shift) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const nx = -dy / length;
+    const ny = dx / length;
+    const bow = Math.min(length * 0.25, 160) * (shift ? -1 : 1);
+
+    return {
+        p0: [start.x, start.y],
+        p1: [start.x + dx * 0.33 + nx * bow, start.y + dy * 0.33 + ny * bow],
+        p2: [start.x + dx * 0.66 - nx * bow, start.y + dy * 0.66 - ny * bow],
+        p3: [end.x, end.y],
+    };
+}
+
+/// Prévia geométrica da forma em posicionamento (sem tocar no documento).
+function placementGeometry(kind, start, end, shift) {
+    const distance = Math.hypot(end.x - start.x, end.y - start.y);
+    if (distance < 1e-6) {
+        return { polylines: [], valid: false, distance };
     }
 
-    state.cursor = { x, y };
+    switch (kind) {
+        case "line":
+            return {
+                polylines: [[[start.x, start.y], [end.x, end.y]]],
+                valid: distance >= 5,
+                distance,
+            };
+        case "bezier": {
+            const curve = bezierFromDrag(start, end, shift);
+            return { polylines: [sampleCubic(curve)], valid: distance >= 5, distance };
+        }
+        case "s": {
+            const curve = sCurveFromDrag(start, end, shift);
+            return { polylines: [sampleCubic(curve)], valid: distance >= 5, distance };
+        }
+        case "arc90":
+        case "curve90": {
+            const arc = quarterArc(start, end, shift);
+            if (!arc) return { polylines: [], valid: false, distance };
+            return {
+                polylines: [
+                    sampleArc(
+                        [arc.center.x, arc.center.y],
+                        arc.radius,
+                        arc.start_deg,
+                        arc.sweep_deg
+                    ),
+                ],
+                valid: distance >= 5,
+                distance,
+                arc,
+            };
+        }
+        case "arc180": {
+            const arc = halfArc(start, end, shift);
+            if (!arc) return { polylines: [], valid: false, distance };
+            return {
+                polylines: [
+                    sampleArc(
+                        [arc.center.x, arc.center.y],
+                        arc.radius,
+                        arc.start_deg,
+                        arc.sweep_deg
+                    ),
+                ],
+                valid: distance >= 5,
+                distance,
+                arc,
+            };
+        }
+        case "cross": {
+            const arm = Math.max(
+                Math.abs(end.x - start.x),
+                Math.abs(end.y - start.y),
+                20
+            );
+            return {
+                polylines: [
+                    [[start.x - arm, start.y], [start.x + arm, start.y]],
+                    [[start.x, start.y - arm], [start.x, start.y + arm]],
+                ],
+                valid: true,
+                distance,
+                arm,
+            };
+        }
+        default:
+            return { polylines: [], valid: false, distance };
+    }
 }
 
-async function afterInsert(id, end, label) {
-    state.selection = id;
-    advanceCursor(end);
+function startPlacement(kind, label) {
+    setTool("select");
+    state.placement = { kind, label, start: null, end: null, shift: false, seq: 0, busy: false };
+    state.selection = null;
+    state.snap = null;
+    state.drag = null;
+    el("canvas").classList.add("placing");
+    updateSelectionPanel();
+    draw();
+    setStatus(`Inserir ${label}: clique na arena para posicionar · Esc cancela.`);
+}
+
+function cancelPlacement(message) {
+    if (!state.placement) return false;
+    state.placement = null;
+    state.snap = null;
+    el("canvas").classList.remove("placing");
+    draw();
+    setStatus(message ?? "Inserção cancelada.");
+    return true;
+}
+
+async function commitPlacement(placement) {
+    const { kind, start, end, shift } = placement;
+    const geometry = placementGeometry(kind, start, end, shift);
+    if (!geometry.valid) {
+        setStatus("Arraste mais para definir o tamanho do elemento.");
+        return;
+    }
+
+    let result;
+    switch (kind) {
+        case "line":
+            result = await rpc("doc.addLine", {
+                a: [start.x, start.y],
+                b: [end.x, end.y],
+                width: 19,
+            });
+            break;
+        case "bezier": {
+            const curve = bezierFromDrag(start, end, shift);
+            result = await rpc("doc.addCubic", { ...curve, width: 19 });
+            break;
+        }
+        case "s": {
+            const curve = sCurveFromDrag(start, end, shift);
+            result = await rpc("doc.addCubic", { ...curve, width: 19 });
+            break;
+        }
+        case "arc90":
+        case "arc180":
+        case "curve90": {
+            const arc = geometry.arc;
+            if (kind === "curve90") {
+                const mirrored = arc.sweep_deg < 0;
+                result = await rpc("doc.addModule", {
+                    template: "curve.90",
+                    params: { radius: arc.radius, width: 19 },
+                    transform: {
+                        tx: arc.center.x,
+                        ty: arc.center.y,
+                        rot_deg: mirrored ? arc.start_deg + 180 : arc.start_deg,
+                        mirrored,
+                    },
+                    width: 19,
+                });
+            } else {
+                result = await rpc("doc.addArc", {
+                    center: [arc.center.x, arc.center.y],
+                    radius: arc.radius,
+                    start_deg: arc.start_deg,
+                    sweep_deg: arc.sweep_deg,
+                    width: 19,
+                });
+            }
+            break;
+        }
+        case "cross": {
+            result = await rpc("doc.addModule", {
+                template: "cross.90",
+                params: { arm: geometry.arm, width: 19 },
+                transform: { tx: start.x, ty: start.y, rot_deg: 0, mirrored: false },
+                width: 19,
+            });
+            break;
+        }
+        default:
+            return;
+    }
+
+    state.placement = null;
+    state.snap = null;
+    el("canvas").classList.remove("placing");
+    state.selection = result.id;
+    state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
     await refreshDoc();
     setStatus(
-        `Elemento ${id} (${label}) inserido · cursor em ` +
-            `${Math.round(state.cursor.x)}, ${Math.round(state.cursor.y)} mm`
+        `Elemento ${result.id} (${placement.label}) inserido · ` +
+            "arraste as alças para ajustar."
     );
 }
 
-async function insertLine() {
-    fitCursor(400, 0);
-    const a = { ...state.cursor };
-    const b = { x: a.x + 400, y: a.y };
-    const result = await rpc("doc.addLine", {
-        a: [a.x, a.y],
-        b: [b.x, b.y],
-        width: 19,
-    });
-    await afterInsert(result.id, b, "Linha");
+function insertLine() {
+    startPlacement("line", "Reta");
 }
 
-async function insertBezier() {
-    fitCursor(400, 120, 120);
-    const p0 = { ...state.cursor };
-    const p1 = { x: p0.x + 130, y: p0.y - 120 };
-    const p2 = { x: p0.x + 270, y: p0.y + 120 };
-    const p3 = { x: p0.x + 400, y: p0.y };
-    const result = await rpc("doc.addCubic", {
-        p0: [p0.x, p0.y],
-        p1: [p1.x, p1.y],
-        p2: [p2.x, p2.y],
-        p3: [p3.x, p3.y],
-        width: 19,
-    });
-    await afterInsert(result.id, p3, "Bézier");
+function insertBezier() {
+    startPlacement("bezier", "Bézier");
 }
 
-async function insertArc90() {
-    fitCursor(200, 200);
-    const start = { ...state.cursor };
-    const radius = 200;
-    const center = { x: start.x, y: start.y + radius };
-    const end = { x: start.x + radius, y: start.y + radius };
-    const result = await rpc("doc.addArc", {
-        center: [center.x, center.y],
-        radius,
-        start_deg: -90,
-        sweep_deg: 90,
-        width: 19,
-    });
-    await afterInsert(result.id, end, "Arco 90°");
+function insertArc90() {
+    startPlacement("arc90", "Arco 90°");
 }
 
-async function insertCurve90() {
-    fitCursor(100, 100);
-    const start = { ...state.cursor };
-    const radius = 100;
-    const end = { x: start.x + radius, y: start.y + radius };
-    const result = await rpc("doc.addModule", {
-        template: "curve.90",
-        params: { radius, width: 19 },
-        transform: {
-            tx: start.x,
-            ty: start.y + radius,
-            rot_deg: -90,
-            mirrored: false,
-        },
-        width: 19,
-    });
-    await afterInsert(result.id, end, "Curva 90°");
+function insertCurve90() {
+    startPlacement("curve90", "Curva 90°");
 }
 
-async function insertArc180() {
-    fitCursor(400, 0, 200);
-    const start = { ...state.cursor };
-    const radius = 200;
-    const center = { x: start.x + radius, y: start.y };
-    const end = { x: start.x + radius * 2, y: start.y };
-    const result = await rpc("doc.addArc", {
-        center: [center.x, center.y],
-        radius,
-        start_deg: 180,
-        sweep_deg: 180,
-        width: 19,
-    });
-    await afterInsert(result.id, end, "Curva 180°");
+function insertArc180() {
+    startPlacement("arc180", "Curva 180°");
 }
 
-async function insertS() {
-    fitCursor(400, 120, 120);
-    const p0 = { ...state.cursor };
-    const p1 = { x: p0.x + 100, y: p0.y + 120 };
-    const p2 = { x: p0.x + 300, y: p0.y - 120 };
-    const p3 = { x: p0.x + 400, y: p0.y };
-    const result = await rpc("doc.addCubic", {
-        p0: [p0.x, p0.y],
-        p1: [p1.x, p1.y],
-        p2: [p2.x, p2.y],
-        p3: [p3.x, p3.y],
-        width: 19,
-    });
-    await afterInsert(result.id, p3, "Curva S");
+function insertS() {
+    startPlacement("s", "Curva S");
 }
 
-async function insertCross() {
-    fitCursor(160, 80, 80);
-    const center = { ...state.cursor };
-    const arm = 80;
-    const end = { x: center.x + arm * 2, y: center.y };
-    const result = await rpc("doc.addModule", {
-        template: "cross.90",
-        params: { arm, width: 19 },
-        transform: {
-            tx: center.x,
-            ty: center.y,
-            rot_deg: 0,
-            mirrored: false,
-        },
-        width: 19,
-    });
-    await afterInsert(result.id, end, "Cruzamento");
+function insertCross() {
+    startPlacement("cross", "Cruzamento 90°");
 }
-
 /* ------------------------------------------------------------------- tools */
 
 function setTool(tool) {
+    if (state.placement) {
+        state.placement = null;
+        state.snap = null;
+        el("canvas").classList.remove("placing");
+    }
+
     state.tool = tool;
 
     document.querySelectorAll(".tool-button").forEach((button) => {
@@ -1004,6 +1274,32 @@ function queueMove(drag) {
         });
 }
 
+function setElementPointLocal(id, key, point) {
+    const element = state.doc?.elements?.find((candidate) => candidate.id === id);
+    if (!element) return;
+    element[key] = [point.x, point.y];
+}
+
+function queueHandle(drag) {
+    drag.chain = drag.chain
+        .then(async () => {
+            if (drag.ended || !drag.targetPoint) return;
+            const target = drag.targetPoint;
+            drag.targetPoint = null;
+
+            await rpc("doc.setGeometry", {
+                id: drag.id,
+                [drag.key]: [target.x, target.y],
+                merge: drag.mergeKey,
+            });
+            setElementPointLocal(drag.id, drag.key, target);
+            draw();
+        })
+        .catch((error) => {
+            setStatus(String(error.message ?? error));
+        });
+}
+
 /* -------------------------------------------------------------- interactions */
 
 async function undo() {
@@ -1055,17 +1351,46 @@ async function newDocument() {
     state.cursor = { x: 300, y: 300 };
     state.snap = null;
     state.drag = null;
+    state.placement = null;
     resetView();
     setTool("select");
     await refreshDoc();
     setStatus("Documento novo · arena 4 × 3 m.");
 }
 
+/// Abre o diálogo nativo e devolve o caminho, ou `null` se cancelado.
+/// Se o diálogo nativo não estiver disponível, usa o diálogo da página.
+async function chooseFilePath(save) {
+    try {
+        const result = await rpc(save ? "doc.saveDialog" : "doc.openDialog");
+        if (result.cancelled) return null;
+        return result.path;
+    } catch (error) {
+        const text = String(error.message ?? error);
+        if (!text.startsWith("dialog_unavailable")) throw error;
+        return askPath(
+            save ? "Salvar documento como:" : "Abrir documento:",
+            "C:/Temp/pistaforge.pftrack"
+        );
+    }
+}
+
 async function saveDocument() {
-    let path = state.doc?.path ?? null;
+    const path = state.doc?.path ?? null;
+    if (path) {
+        const result = await rpc("doc.save", { path });
+        await refreshDoc();
+        setStatus(`Salvo em ${result.path}`);
+        return;
+    }
+    await saveDocumentAs();
+}
+
+async function saveDocumentAs() {
+    const path = await chooseFilePath(true);
     if (!path) {
-        path = await askPath("Salvar documento como:", "C:/Temp/pistaforge.pftrack");
-        if (!path) return;
+        setStatus("Salvamento cancelado.");
+        return;
     }
 
     const result = await rpc("doc.save", { path });
@@ -1074,14 +1399,18 @@ async function saveDocument() {
 }
 
 async function openDocument() {
-    const path = await askPath("Abrir documento:", "C:/Temp/pistaforge.pftrack");
-    if (!path) return;
+    const path = await chooseFilePath(false);
+    if (!path) {
+        setStatus("Abertura cancelada.");
+        return;
+    }
 
     await rpc("doc.load", { path });
     state.selection = null;
     state.cursor = { x: 300, y: 300 };
     state.snap = null;
     state.drag = null;
+    state.placement = null;
     resetView();
     setTool("select");
     await refreshDoc();
@@ -1130,6 +1459,44 @@ async function onPointerDown(event) {
     const point = canvasToWorld(event);
     if (!point) return;
 
+    const placement = state.placement;
+    if (placement) {
+        if (placement.busy) return;
+        placement.busy = true;
+        try {
+            const seq = ++placement.seq;
+            const result = await requestSnap(point, null);
+            if (state.placement !== placement || placement.seq !== seq) return;
+
+            const snapped = snappedPoint(result, point);
+            state.snap = result?.kind !== "none" ? result : null;
+
+            if (!placement.start) {
+                placement.start = snapped;
+                placement.end = snapped;
+                placement.shift = event.shiftKey;
+                state.cursor = {
+                    x: Math.round(snapped.x),
+                    y: Math.round(snapped.y),
+                };
+                updateFacts();
+                draw();
+                setStatus(
+                    `${placement.label}: mova o mouse para dimensionar · ` +
+                        "clique para confirmar · Esc cancela."
+                );
+                return;
+            }
+
+            placement.end = snapped;
+            placement.shift = event.shiftKey;
+            await commitPlacement(placement);
+        } finally {
+            placement.busy = false;
+        }
+        return;
+    }
+
     canvas.setPointerCapture(event.pointerId);
 
     if (state.tool === "line" || state.tool === "bezier") {
@@ -1156,6 +1523,30 @@ async function onPointerDown(event) {
         state.snap = result?.kind !== "none" ? result : null;
         draw();
         setStatus("Arraste para desenhar · Esc cancela.");
+        return;
+    }
+
+    // Alças de edição do elemento selecionado têm prioridade sobre mover.
+    const handle = handleAtPoint(point);
+    if (handle) {
+        const drag = {
+            mode: "handle",
+            id: state.selection,
+            key: handle.key,
+            pointerId: event.pointerId,
+            ended: false,
+            seq: 0,
+            targetPoint: null,
+            chain: Promise.resolve(),
+            mergeKey: `handle-${state.selection}-${handle.key}-${Date.now()}`,
+        };
+        state.drag = drag;
+        canvas.classList.add("dragging");
+        draw();
+        setStatus(
+            `Ajustando ${handle.key.toUpperCase()} do elemento ${state.selection} · ` +
+                "Esc cancela."
+        );
         return;
     }
 
@@ -1214,6 +1605,25 @@ async function onPointerDown(event) {
 }
 
 async function onPointerMove(event) {
+    const placement = state.placement;
+    if (placement && !state.drag) {
+        const point = canvasToWorld(event);
+        if (!point) return;
+
+        placement.shift = event.shiftKey;
+        const seq = ++placement.seq;
+        const result = await requestSnap(point, null);
+        if (state.placement !== placement || placement.seq !== seq) return;
+
+        const snapped = snappedPoint(result, point);
+        state.snap = result?.kind !== "none" ? result : null;
+        if (placement.start) placement.end = snapped;
+        state.cursor = { x: Math.round(snapped.x), y: Math.round(snapped.y) };
+        updateFacts();
+        draw();
+        return;
+    }
+
     const drag = state.drag;
     if (!drag || drag.pointerId !== event.pointerId) return;
 
@@ -1243,6 +1653,19 @@ async function onPointerMove(event) {
             y: snapped.y - drag.grabPoint.y,
         };
         queueMove(drag);
+        draw();
+        return;
+    }
+
+    if (drag.mode === "handle") {
+        const seq = ++drag.seq;
+        const result = await requestSnap(point, drag.id);
+        if (state.drag !== drag || drag.ended || drag.seq !== seq) return;
+
+        const snapped = snappedPoint(result, point);
+        state.snap = result?.kind !== "none" ? result : null;
+        drag.targetPoint = snapped;
+        queueHandle(drag);
         draw();
         return;
     }
@@ -1289,6 +1712,33 @@ async function onPointerUp(event) {
         state.snap = null;
         await refreshDoc();
         setStatus(`Elemento ${drag.id} movido.`);
+        return;
+    }
+
+    if (drag.mode === "handle") {
+        drag.ended = true;
+        await drag.chain;
+
+        if (drag.targetPoint) {
+            const target = drag.targetPoint;
+            drag.targetPoint = null;
+            try {
+                await rpc("doc.setGeometry", {
+                    id: drag.id,
+                    [drag.key]: [target.x, target.y],
+                    merge: drag.mergeKey,
+                });
+                setElementPointLocal(drag.id, drag.key, target);
+            } catch (error) {
+                setStatus(String(error.message ?? error));
+            }
+        }
+
+        if (state.drag === drag) state.drag = null;
+        canvas.classList.remove("dragging");
+        state.snap = null;
+        await refreshDoc();
+        setStatus(`Geometria do elemento ${drag.id} atualizada.`);
         return;
     }
 
@@ -1431,6 +1881,8 @@ async function runAction(action) {
             return openDocument();
         case "save":
             return saveDocument();
+        case "save-as":
+            return saveDocumentAs();
         case "arena-default":
             return setArena(4000, 3000);
         case "arena-3x4":
@@ -1557,7 +2009,9 @@ async function init() {
                 break;
             case "Escape":
                 state.snap = null;
-                if (state.drag) {
+                if (state.placement) {
+                    cancelPlacement();
+                } else if (state.drag) {
                     state.drag.ended = true;
                     state.drag = null;
                     el("canvas").classList.remove("dragging", "panning");

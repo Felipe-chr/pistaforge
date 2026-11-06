@@ -1,4 +1,4 @@
-#include <cstdint>
+﻿#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -638,4 +638,126 @@ TEST_CASE("API: encaixe de pontos") {
     });
     REQUIRE(ignored["ok"].get<bool>());
     CHECK(ignored["result"]["kind"] == "none");
+}
+
+TEST_CASE("API: editar geometria de reta e Bézier") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const auto line = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+    const auto curve = api.call(
+        R"({"id":3,"method":"doc.addCubic","params":{"p0":[0,100],"p1":[50,100],"p2":[50,200],"p3":[100,200]}})")["result"]["id"].get<std::uint64_t>();
+
+    const json moved_line = api.call_json(json{
+        {"id", 4},
+        {"method", "doc.setGeometry"},
+        {"params", {{"id", line}, {"a", {10.0, 20.0}}, {"b", {310.0, 20.0}}}},
+    });
+    REQUIRE(moved_line["ok"].get<bool>());
+
+    const json moved_curve = api.call_json(json{
+        {"id", 5},
+        {"method", "doc.setGeometry"},
+        {"params",
+         {{"id", curve},
+          {"p0", {0.0, 100.0}},
+          {"p1", {80.0, 100.0}},
+          {"p2", {20.0, 200.0}},
+          {"p3", {100.0, 200.0}}}},
+    });
+    REQUIRE(moved_curve["ok"].get<bool>());
+
+    const json state = api.call(R"({"id":6,"method":"doc.state"})");
+    const json& first = state["result"]["elements"][0];
+    const json& second = state["result"]["elements"][1];
+    CHECK(first["a"] == json::array({10.0, 20.0}));
+    CHECK(first["b"] == json::array({310.0, 20.0}));
+    CHECK(second["p1"] == json::array({80.0, 100.0}));
+    CHECK(second["p2"] == json::array({20.0, 200.0}));
+}
+
+TEST_CASE("API: editar geometria agrupa arrastos e valida") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto id = api.call(
+        R"({"id":2,"method":"doc.addCubic","params":{"p0":[0,0],"p1":[50,0],"p2":[50,100],"p3":[100,100]}})")["result"]["id"].get<std::uint64_t>();
+
+    api.call_json(json{
+        {"id", 3},
+        {"method", "doc.setGeometry"},
+        {"params", {{"id", id}, {"p1", {60.0, 0.0}}, {"merge", "handle-1"}}},
+    });
+    api.call_json(json{
+        {"id", 4},
+        {"method", "doc.setGeometry"},
+        {"params", {{"id", id}, {"p1", {70.0, 0.0}}, {"merge", "handle-1"}}},
+    });
+
+    const json history = api.call(R"({"id":5,"method":"doc.history"})");
+    REQUIRE(history["ok"].get<bool>());
+    CHECK(history["result"]["undo"] == 2);
+
+    const json undone = api.call(R"({"id":6,"method":"doc.undo"})");
+    REQUIRE(undone["ok"].get<bool>());
+    CHECK(undone["result"]["label"] == "Editar geometria");
+
+    const json state = api.call(R"({"id":7,"method":"doc.state"})");
+    CHECK(state["result"]["elements"][0]["p1"] == json::array({50.0, 0.0}));
+
+    const auto arc = api.call(
+        R"({"id":8,"method":"doc.addArc","params":{"center":[0,0],"radius":100,"start_deg":0,"sweep_deg":90}})")["result"]["id"].get<std::uint64_t>();
+    const json bad_arc = api.call_json(json{
+        {"id", 9},
+        {"method", "doc.setGeometry"},
+        {"params", {{"id", arc}, {"radius", 0.0}}},
+    });
+    CHECK_FALSE(bad_arc["ok"].get<bool>());
+    CHECK(bad_arc["error"]["code"] == "invalid_params");
+
+    const json missing = api.call_json(json{
+        {"id", 10},
+        {"method", "doc.setGeometry"},
+        {"params", {{"id", 9999}, {"a", {0.0, 0.0}}}},
+    });
+    CHECK_FALSE(missing["ok"].get<bool>());
+    CHECK(missing["error"]["code"] == "not_found");
+}
+
+TEST_CASE("API: diálogos nativos de abrir e salvar") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const json unavailable = api.call(R"({"id":2,"method":"doc.openDialog"})");
+    CHECK_FALSE(unavailable["ok"].get<bool>());
+    CHECK(unavailable["error"]["code"] == "dialog_unavailable");
+
+    const std::filesystem::path chosen =
+        std::filesystem::temp_directory_path() / "pista_escolhida.pftrack";
+    pf::FileDialogRequest captured;
+    api.state.file_dialog = [&](const pf::FileDialogRequest& request) {
+        captured = request;
+        return std::optional<std::filesystem::path>{chosen};
+    };
+
+    const json opened = api.call(R"({"id":3,"method":"doc.openDialog"})");
+    REQUIRE(opened["ok"].get<bool>());
+    CHECK(opened["result"]["path"] == chosen.string());
+    CHECK_FALSE(captured.save);
+    CHECK(captured.title == "Abrir pista");
+    CHECK(api.state.last_dir == chosen.parent_path());
+
+    const json saved = api.call(R"({"id":4,"method":"doc.saveDialog"})");
+    REQUIRE(saved["ok"].get<bool>());
+    CHECK(saved["result"]["path"] == chosen.string());
+    CHECK(captured.save);
+    CHECK(captured.title == "Salvar pista como");
+    CHECK(captured.default_name == "pista.pftrack");
+
+    api.state.file_dialog = [](const pf::FileDialogRequest&) {
+        return std::optional<std::filesystem::path>{};
+    };
+    const json cancelled = api.call(R"({"id":5,"method":"doc.saveDialog"})");
+    REQUIRE(cancelled["ok"].get<bool>());
+    CHECK(cancelled["result"]["cancelled"] == true);
 }

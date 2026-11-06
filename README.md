@@ -9,7 +9,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 - **Impressão:** SVG 1:1 em mm, mosaico de páginas
 - **Simulação:** exportação JSON versionada (simulador virá depois)
 
-## Estado atual — M1 + M2
+## Estado atual — M1 + M2 + edição
 
 - [x] Repositório, CMake, presets MSVC
 - [x] FastWebUI vendorizado e linkado como biblioteca estática
@@ -25,9 +25,9 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 - [x] API de documento/cena (`doc.*`, `scene.*`)
 - [x] Interface com faixa estilo Office (abas **Inserir**, **Documento** e
       **Exibir**), ícones SVG de curvas e inserção real de elementos
-- [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo de
-      caminho para salvar/abrir
-- [x] Testes com doctest e alvo `pf_tests` — 85 casos / 1450 asserções
+- [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo nativo
+      do Windows para abrir/salvar (com fallback em `<dialog>`)
+- [x] Testes com doctest e alvo `pf_tests` — 88 casos / 1479 asserções
 - [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
 - [x] Editor MVP com canvas interativo (M2)
@@ -36,6 +36,13 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
   - [x] Encaixe com prioridade **porta > elemento > grade** e indicador visual
   - [x] Desfazer/refazer com histórico de instantâneos e arrastos agrupados
   - [x] Zoom pela roda do mouse, pan com botão do meio ou `Espaço` + arrasto
+- [x] Inserção por posicionamento com o mouse (M3)
+  - [x] Primeiro clique ancora, movimento do mouse dimensiona/orienta e o
+        segundo clique confirma; `Esc` cancela
+  - [x] Prévia em tempo real com medida em mm
+  - [x] Alças de edição para retas e Béziers (extremos e pontos de controle)
+  - [x] Diálogos nativos de arquivo (`GetOpenFileNameW` / `GetSaveFileNameW`)
+  - [x] **Salvar como** na faixa e abertura direta na última pasta usada
 
 ### API de documento e cena
 
@@ -45,6 +52,8 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.state` | `{}` | documento `.pftrack` + `path` |
 | `doc.load` | `{path}` | resumo do documento |
 | `doc.save` | `{path?}` | `{path, rev}` |
+| `doc.openDialog` | `{}` | `{path}` ou `{cancelled:true}` |
+| `doc.saveDialog` | `{}` | `{path}` ou `{cancelled:true}` |
 | `doc.addLine` | `{a,b,width?,layer?}` | `{id,rev}` |
 | `doc.addCubic` | `{p0,p1,p2,p3,width?,layer?}` | `{id,rev}` |
 | `doc.addArc` | `{center,radius,start?,sweep?,width?,layer?}` | `{id,rev}` |
@@ -52,6 +61,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.removeElement` | `{id}` | `{rev,removed}` |
 | `doc.moveElement` | `{id,delta,merge?}` | `{id,delta,rev}` |
 | `doc.setElement` | `{id,width?,layer?,hidden?,locked?,label?,merge?}` | `{id,rev}` |
+| `doc.setGeometry` | `{id,a?,b?,p0?,p1?,p2?,p3?,center?,radius?,start?,sweep?,merge?}` | `{id,rev}` |
 | `doc.undo` | `{}` | `{rev,label,can_undo,can_redo,history}` |
 | `doc.redo` | `{}` | `{rev,label,can_undo,can_redo,history}` |
 | `doc.history` | `{}` | `{can_undo,can_redo,undo,redo}` |
@@ -84,36 +94,41 @@ A janela é dividida em quatro áreas:
   - **Inserir** — ferramentas (selecionar, reta, Bézier), formas, curvas
     (arco 90°, curva 90°, 180°, curva S), cruzamento 90° e edição (desfazer,
     refazer, excluir, novo).
-  - **Documento** — novo, abrir, salvar e presets de arena (4 × 3 m e 3 × 4 m).
+  - **Documento** — novo, abrir, salvar, salvar como e presets de arena
+    (4 × 3 m e 3 × 4 m).
   - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias.
 - **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
 - **Prancheta** ao centro, com grade, margem de segurança, cotas e cursor.
 - **Painel** à direita, com versão, compilador, contadores do documento,
   seleção atual, arena e estado da ponte.
 
-Cada clique de inserção coloca o elemento na posição do cursor e avança o cursor
-para o fim do elemento (sem conexão automática nesta etapa). Os elementos são
-criados no núcleo C++ via `doc.*`; o JavaScript apenas desenha e captura
-entrada.
+As formas da faixa **Inserir** (e da biblioteca) entram em **modo de
+posicionamento**: o primeiro clique na arena ancora a forma, o movimento do
+mouse define tamanho e direção (com prévia e medida em mm) e o segundo clique
+confirma. `Esc` cancela sem criar nada. O JavaScript só desenha e captura
+entrada; a geometria é criada no núcleo C++ via `doc.*`.
 
 ### Edição no canvas (M2)
 
 | Ação | Como fazer |
 |------|------------|
+| Inserir forma | escolha a forma na faixa/biblioteca, clique para ancorar e clique de novo para confirmar |
 | Selecionar | ferramenta **Selecionar** (`V`) e clique no elemento |
 | Mover | arrastar o elemento selecionado (com encaixe) |
+| Editar geometria | com reta/Bézier selecionada, arraste as alças (quadradas = extremos, redondas = controles) |
 | Excluir | `Del` ou `Backspace` |
 | Desenhar reta | ferramenta **Reta** (`L`) e arrastar |
 | Desenhar Bézier | ferramenta **Bézier** (`B`) e arrastar (com `Shift` para inverter a curvatura) |
 | Desfazer / refazer | `Ctrl+Z` / `Ctrl+Y` |
 | Zoom | roda do mouse (ancorado no ponteiro) ou botões **Aproximar/Afastar/Ajustar** |
 | Pan | botão do meio arrastando ou `Espaço` + arrasto |
-| Cancelar | `Esc` |
+| Cancelar | `Esc` (posicionamento, arrasto ou seleção) |
 
 O arrasto contínuo gera uma única entrada de desfazer (mesma chave `merge`).
 
-Salvar e abrir usam um diálogo próprio (`<dialog>`) porque o navegador embutido
-não implementa `window.prompt`.
+Abrir e salvar usam os diálogos nativos do Windows (`GetOpenFileNameW` /
+`GetSaveFileNameW`), começando na última pasta usada. Se o diálogo nativo não
+estiver disponível, a interface cai no `<dialog>` da página.
 
 ## Build
 

@@ -576,6 +576,10 @@ body {
     cursor: crosshair;
 }
 
+#canvas.placing {
+    cursor: crosshair;
+}
+
 #canvas.panning {
     cursor: grabbing;
 }

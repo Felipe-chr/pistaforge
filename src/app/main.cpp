@@ -11,6 +11,7 @@
 #include "app/bridge/api.hpp"
 #include "app/bridge/dispatcher.hpp"
 #include "app/bridge/state.hpp"
+#include "app/shell/file_dialog.hpp"
 #include "app/shell/webui_shell.hpp"
 #include "core/geometry/bezier.hpp"
 #include "core/io/scene_json.hpp"
@@ -144,6 +145,9 @@ int main(int argc, char** argv) {
     }
 
     pf::AppState state;
+    state.file_dialog = [](const pf::FileDialogRequest& request) {
+        return pf::show_file_dialog(request);
+    };
     pf::Dispatcher dispatcher;
     pf::register_api(dispatcher, state);
 

@@ -60,9 +60,10 @@ target_compile_definitions(pf_bridge PUBLIC PF_VERSION="${PF_VERSION}")
 add_executable(pf_app
     src/app/main.cpp
     src/app/shell/webui_shell.cpp
+    src/app/shell/file_dialog.cpp
 )
 set_target_properties(pf_app PROPERTIES OUTPUT_NAME "PistaForge")
-target_link_libraries(pf_app PRIVATE pf_bridge webui)
+target_link_libraries(pf_app PRIVATE pf_bridge webui comdlg32)
 target_compile_options(pf_app PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4>)
 target_compile_definitions(pf_app PRIVATE
     PF_SOURCE_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/web"

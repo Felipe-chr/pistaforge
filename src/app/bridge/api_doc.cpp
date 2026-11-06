@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "app/bridge/dispatcher.hpp"
@@ -152,6 +153,17 @@ LayerId layer_param(const Json& params, LayerId fallback = LayerId::Track) {
         fail("invalid_params", "Camada desconhecida: " + it->get<std::string>() + ".");
     }
     return *layer;
+}
+
+/// Pasta inicial dos diálogos de arquivo: última usada, senão a do documento.
+std::filesystem::path dialog_directory(const AppState& state) {
+    if (!state.last_dir.empty()) return state.last_dir;
+    if (!state.path.empty() && state.path.has_parent_path()) {
+        return state.path.parent_path();
+    }
+    std::error_code error;
+    const std::filesystem::path current = std::filesystem::current_path(error);
+    return error ? std::filesystem::path{} : current;
 }
 
 Json arena_json(const Arena& arena) {
@@ -327,9 +339,46 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         }
 
         state.path = std::filesystem::absolute(path);
+        if (state.path.has_parent_path()) state.last_dir = state.path.parent_path();
         state.history.reset();
         state.rebuild_index();
         return doc_summary(state);
+    });
+
+    dispatcher.add("doc.openDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = false;
+        request.title = "Abrir pista";
+        request.initial_path = dialog_directory(state);
+
+        const std::optional<std::filesystem::path> path = state.file_dialog(request);
+        if (!path) return Json{{"cancelled", true}};
+        if (path->has_parent_path()) state.last_dir = path->parent_path();
+        return Json{{"path", path->string()}};
+    });
+
+    dispatcher.add("doc.saveDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = true;
+        request.title = "Salvar pista como";
+        request.initial_path = dialog_directory(state);
+        request.default_name =
+            state.path.empty() ? "pista.pftrack" : state.path.filename().string();
+
+        const std::optional<std::filesystem::path> path = state.file_dialog(request);
+        if (!path) return Json{{"cancelled", true}};
+        if (path->has_parent_path()) state.last_dir = path->parent_path();
+        return Json{{"path", path->string()}};
     });
 
     dispatcher.add("doc.save", [&state](const Json& params) {
@@ -359,6 +408,7 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         }
 
         state.path = std::filesystem::absolute(path);
+        if (state.path.has_parent_path()) state.last_dir = state.path.parent_path();
         return Json{{"path", state.path.string()}, {"rev", state.scene.revision}};
     });
 
@@ -573,6 +623,61 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                    }
 
                    return Json{{"id", id}};
+               },
+               "merge");
+
+    add_change(dispatcher, state, "doc.setGeometry", "Editar geometria",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element* element = state.scene.find_element(id);
+                   if (element == nullptr) {
+                       fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                   }
+                   if (element->locked) {
+                       fail("element_locked", "O elemento está bloqueado.");
+                   }
+
+                   if (auto* line = std::get_if<LineSegment>(&element->shape)) {
+                       if (params.contains("a")) line->a = point_param(params, "a");
+                       if (params.contains("b")) line->b = point_param(params, "b");
+                       return Json{{"id", id}};
+                   }
+
+                   if (auto* curve = std::get_if<CubicBezier>(&element->shape)) {
+                       if (params.contains("p0")) curve->p0 = point_param(params, "p0");
+                       if (params.contains("p1")) curve->p1 = point_param(params, "p1");
+                       if (params.contains("p2")) curve->p2 = point_param(params, "p2");
+                       if (params.contains("p3")) curve->p3 = point_param(params, "p3");
+                       return Json{{"id", id}};
+                   }
+
+                   if (auto* arc = std::get_if<ArcSegment>(&element->shape)) {
+                       if (params.contains("center")) {
+                           arc->center = point_param(params, "center");
+                       }
+                       if (params.contains("radius")) {
+                           arc->radius = positive_number(params.at("radius"), "radius");
+                       }
+                       if (params.contains("start") || params.contains("start_deg")) {
+                           arc->start_angle =
+                               number_or(params, "start",
+                                         number_or(params, "start_deg", 0.0)) *
+                               kDegToRad;
+                       }
+                       if (params.contains("sweep") || params.contains("sweep_deg")) {
+                           arc->sweep_angle =
+                               number_or(params, "sweep",
+                                         number_or(params, "sweep_deg", 90.0)) *
+                               kDegToRad;
+                       }
+                       if (!arc->is_valid()) {
+                           fail("invalid_params", "Arco com raio ou varredura inválidos.");
+                       }
+                       return Json{{"id", id}};
+                   }
+
+                   fail("unsupported", "Este elemento não permite editar a geometria.");
                },
                "merge");
 
