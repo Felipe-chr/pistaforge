@@ -17,6 +17,12 @@ struct FileDialogRequest {
     std::string title;
     std::filesystem::path initial_path;
     std::string default_name;
+    /// Filtro exibido no diálogo (padrão: documentos PistaForge).
+    std::string filter_label;
+    /// Padrão do filtro no formato Win32 (ex.: `*.svg`).
+    std::string filter_pattern;
+    /// Extensão aplicada quando o usuário não digita uma.
+    std::string default_extension;
 };
 
 /// Mostra o diálogo nativo e devolve o caminho escolhido (ou vazio se cancelado).

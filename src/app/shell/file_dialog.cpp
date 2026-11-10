@@ -24,7 +24,7 @@ std::wstring widen(std::string_view text) {
 }
 
 /// Filtro no formato do Win32: rótulo\0padrão\0...\0\0.
-std::wstring build_filter() {
+std::wstring build_filter(const FileDialogRequest& request) {
     std::wstring filter;
     const auto add = [&filter](std::wstring_view label, std::wstring_view pattern) {
         filter.append(label);
@@ -32,7 +32,11 @@ std::wstring build_filter() {
         filter.append(pattern);
         filter.push_back(L'\0');
     };
-    add(L"Pistas PistaForge (*.pftrack)", L"*.pftrack");
+    const std::string label =
+        request.filter_label.empty() ? "Pistas PistaForge (*.pftrack)" : request.filter_label;
+    const std::string pattern =
+        request.filter_pattern.empty() ? "*.pftrack" : request.filter_pattern;
+    add(widen(label), widen(pattern));
     add(L"Todos os arquivos (*.*)", L"*.*");
     filter.push_back(L'\0');
     return filter;
@@ -44,8 +48,10 @@ std::optional<std::filesystem::path> show_file_dialog(const FileDialogRequest& r
     const std::wstring title = widen(
         request.title.empty() ? (request.save ? "Salvar pista" : "Abrir pista")
                               : request.title);
-    const std::wstring filter = build_filter();
-    const std::wstring extension = L"pftrack";
+    const std::wstring filter = build_filter(request);
+    const std::wstring extension = widen(request.default_extension.empty()
+                                             ? std::string{"pftrack"}
+                                             : request.default_extension);
     const std::wstring initial_dir = request.initial_path.wstring();
     const std::wstring default_name = widen(request.default_name);
 

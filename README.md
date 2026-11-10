@@ -27,7 +27,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
       **Exibir**), ícones SVG de curvas e inserção real de elementos
 - [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo nativo
       do Windows para abrir/salvar (com fallback em `<dialog>`)
-- [x] Testes com doctest e alvo `pf_tests` — 90 casos / 1512 asserções
+- [x] Testes com doctest e alvo `pf_tests` — 102 casos / 1572 asserções
 - [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
 - [x] Editor MVP com canvas interativo (M2)
@@ -47,6 +47,12 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
   - [x] Largada e chegada do circuito com faixa quadriculada perpendicular à pista
   - [x] Ímã de pontas: ao aproximar uma extremidade de uma porta existente, o
         encaixe trava e a conexão é criada automaticamente
+- [x] Exportação e impressão em SVG 1:1 (M4)
+  - [x] Unidades em mm com `viewBox` na mesma escala (imprime sem redução)
+  - [x] Arquivo único da arena ou mosaico de páginas com sobreposição
+  - [x] Página padrão de 190 × 277 mm (A4 retrato com margens de 10 mm)
+  - [x] Régua de calibração de 100 mm, rótulo de página e marcas de canto
+  - [x] Grade de referência de 100/500 mm e faixas de largada/chegada
 
 ### API de documento e cena
 
@@ -58,6 +64,8 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.save` | `{path?}` | `{path, rev}` |
 | `doc.openDialog` | `{}` | `{path}` ou `{cancelled:true}` |
 | `doc.saveDialog` | `{}` | `{path}` ou `{cancelled:true}` |
+| `doc.exportSvg` | `{path,tiled?,page_width?,page_height?,overlap?,grid?,calibration?,guides?}` | `{files,pages,tiled,width,height,rev}` |
+| `doc.exportSvgDialog` | `{tiled?,page_width?,...}` | `{files,pages,tiled,...}` ou `{cancelled:true}` |
 | `doc.addLine` | `{a,b,width?,layer?}` | `{id,rev}` |
 | `doc.addCubic` | `{p0,p1,p2,p3,width?,layer?}` | `{id,rev}` |
 | `doc.addArc` | `{center,radius,start?,sweep?,width?,layer?}` | `{id,rev}` |
@@ -103,8 +111,8 @@ A janela é dividida em quatro áreas:
     (arco 90°, curva 90°, 180°, curva S), cruzamento 90°, **Circuito**
     (largada, chegada e remover marcas) e edição (desfazer, refazer, excluir,
     novo).
-  - **Documento** — novo, abrir, salvar, salvar como e presets de arena
-    (4 × 3 m e 3 × 4 m).
+  - **Documento** — novo, abrir, salvar, salvar como, presets de arena
+    (4 × 3 m e 3 × 4 m) e exportação (**Exportar SVG** e **Mosaico A4**).
   - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias.
 - **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
 - **Prancheta** ao centro, com grade, margem de segurança, cotas e cursor.
@@ -141,6 +149,19 @@ O arrasto contínuo gera uma única entrada de desfazer (mesma chave `merge`).
 Abrir e salvar usam os diálogos nativos do Windows (`GetOpenFileNameW` /
 `GetSaveFileNameW`), começando na última pasta usada. Se o diálogo nativo não
 estiver disponível, a interface cai no `<dialog>` da página.
+
+### Exportação e impressão (SVG)
+
+**Documento → Exportar SVG** grava a arena inteira em um arquivo; **Mosaico A4**
+divide o desenho em páginas de 190 × 277 mm (A4 retrato com margens de 10 mm) e
+sobreposição de 10 mm. O desenho usa milímetros como unidade (`width="4000mm"` e
+`viewBox="0 0 4000 3000"`), então a impressão sai em escala 1:1.
+
+Cada página do mosaico traz régua de calibração de 100 mm, rótulo com a posição
+da página e marcas de canto para alinhar a colagem. Os arquivos seguem o padrão
+`<nome>-c<coluna>-r<linha>.svg`, com índices a partir de 1. Grade de referência
+(100/500 mm), calibração e guias podem ser ligadas/desligadas pelos parâmetros de
+`doc.exportSvg`.
 
 ## Build
 
@@ -216,7 +237,7 @@ Autoteste do núcleo e da ponte, sem abrir janela:
 ```
 src/core/geometry/   Vec2, BBox, CubicBezier, LineSegment, ArcSegment, SpatialIndex
 src/core/scene/      Arena, Element, ModuleInstance, Scene, validação
-src/core/io/         Documento `.pftrack` (JSON schema 1)
+src/core/io/         Documento `.pftrack` (JSON schema 1) e exportação SVG 1:1
 src/app/bridge/      Dispatcher JSON + métodos da API
 src/app/shell/       IShell/WebUiShell (FastWebUI)
 src/web/             index.html, styles.css, app.js

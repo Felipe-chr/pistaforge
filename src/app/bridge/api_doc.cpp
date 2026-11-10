@@ -18,6 +18,7 @@
 #include "app/bridge/error.hpp"
 #include "app/bridge/state.hpp"
 #include "core/io/scene_json.hpp"
+#include "core/io/scene_svg.hpp"
 #include "core/scene/snap.hpp"
 #include "core/scene/validation.hpp"
 
@@ -296,6 +297,74 @@ void add_untracked_change(Dispatcher& dispatcher, AppState& state, std::string m
                    });
 }
 
+void write_text_file(const std::filesystem::path& path, std::string_view content) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        fail("io_error", "Não foi possível gravar: " + path.string() + ".");
+    }
+    file.write(content.data(), static_cast<std::streamsize>(content.size()));
+    if (!file.good()) {
+        fail("io_error", "Falha ao gravar: " + path.string() + ".");
+    }
+}
+
+/// Exporta a cena para SVG 1:1, em arquivo único ou em mosaico de páginas.
+Json export_svg(AppState& state, const Json& params) {
+    require_object(params);
+    const std::filesystem::path path{string_param(params, "path")};
+
+    io::SvgOptions options;
+    options.tiled = bool_or(params, "tiled", false);
+    options.page_width_mm = number_or(params, "page_width", options.page_width_mm);
+    options.page_height_mm = number_or(params, "page_height", options.page_height_mm);
+    options.overlap_mm = number_or(params, "overlap", options.overlap_mm);
+    options.grid = bool_or(params, "grid", options.grid);
+    options.calibration = bool_or(params, "calibration", options.calibration);
+    options.guides = bool_or(params, "guides", options.guides);
+
+    if (!(options.page_width_mm > 0.0) || !(options.page_height_mm > 0.0)) {
+        fail("invalid_params", "As dimensões da página devem ser positivas.");
+    }
+    if (options.overlap_mm < 0.0) {
+        fail("invalid_params", "A sobreposição não pode ser negativa.");
+    }
+
+    if (path.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(path.parent_path(), error);
+    }
+
+    Json files = Json::array();
+    int pages = 1;
+    if (options.tiled) {
+        const std::vector<io::SvgPage> tiles = io::to_svg_pages(state.scene, options);
+        pages = static_cast<int>(tiles.size());
+        const std::string stem = path.stem().string();
+        const std::string extension =
+            path.extension().empty() ? std::string{".svg"} : path.extension().string();
+        for (const io::SvgPage& page : tiles) {
+            std::filesystem::path page_path = path;
+            page_path.replace_filename(stem + "-c" + std::to_string(page.column + 1) + "-r" +
+                                       std::to_string(page.row + 1) + extension);
+            write_text_file(page_path, page.content);
+            files.push_back(page_path.string());
+        }
+    } else {
+        write_text_file(path, io::to_svg(state.scene, options));
+        files.push_back(path.string());
+    }
+
+    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    return Json{
+        {"files", files},
+        {"pages", pages},
+        {"tiled", options.tiled},
+        {"width", state.scene.arena.width_mm},
+        {"height", state.scene.arena.height_mm},
+        {"rev", state.scene.revision},
+    };
+}
+
 } // namespace
 
 void register_doc_api(Dispatcher& dispatcher, AppState& state) {
@@ -410,6 +479,35 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         state.path = std::filesystem::absolute(path);
         if (state.path.has_parent_path()) state.last_dir = state.path.parent_path();
         return Json{{"path", state.path.string()}, {"rev", state.scene.revision}};
+    });
+
+    dispatcher.add("doc.exportSvg", [&state](const Json& params) -> Json {
+        return export_svg(state, params);
+    });
+
+    dispatcher.add("doc.exportSvgDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = true;
+        request.title = "Exportar desenho SVG";
+        request.initial_path = dialog_directory(state);
+        request.default_name =
+            state.path.empty() ? "pista.svg" : state.path.stem().string() + ".svg";
+        request.filter_label = "Desenho SVG (*.svg)";
+        request.filter_pattern = "*.svg";
+        request.default_extension = "svg";
+
+        const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
+        if (!chosen) return Json{{"cancelled", true}};
+        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+
+        Json forwarded = params;
+        forwarded["path"] = chosen->string();
+        return export_svg(state, forwarded);
     });
 
     add_change(dispatcher, state, "doc.addLine", "Inserir linha", [&state](const Json& params) {

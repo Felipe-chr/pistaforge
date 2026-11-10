@@ -36,6 +36,7 @@ add_library(pf_core STATIC
     src/core/scene/snap.cpp
     src/core/scene/validation.cpp
     src/core/io/scene_json.cpp
+    src/core/io/scene_svg.cpp
 )
 target_include_directories(pf_core PUBLIC src vendor)
 target_compile_options(pf_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4>)
@@ -96,6 +97,7 @@ add_executable(pf_tests
     tests/test_history.cpp
     tests/test_snap.cpp
     tests/test_scene_json.cpp
+    tests/test_svg.cpp
     tests/test_dispatcher.cpp
     tests/test_api_doc.cpp
 )

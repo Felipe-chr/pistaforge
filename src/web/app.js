@@ -1618,6 +1618,37 @@ async function saveDocumentAs() {
     setStatus(`Salvo em ${result.path}`);
 }
 
+async function exportSvg(tiled) {
+    let result;
+    try {
+        result = await rpc("doc.exportSvgDialog", { tiled });
+    } catch (error) {
+        const text = String(error.message ?? error);
+        if (!text.startsWith("dialog_unavailable")) throw error;
+        const path = await askPath(
+            tiled ? "Exportar mosaico SVG (arquivo base):" : "Exportar SVG:",
+            "C:/Temp/pista.svg"
+        );
+        if (!path) {
+            setStatus("Exportação cancelada.");
+            return;
+        }
+        result = await rpc("doc.exportSvg", { path, tiled });
+    }
+
+    if (result.cancelled) {
+        setStatus("Exportação cancelada.");
+        return;
+    }
+
+    if (result.tiled) {
+        const first = result.files[0] ?? "";
+        setStatus(`Mosaico SVG: ${result.pages} página(s) · ${first}`);
+    } else {
+        setStatus(`SVG exportado: ${result.files[0] ?? ""}`);
+    }
+}
+
 async function openDocument() {
     const path = await chooseFilePath(false);
     if (!path) {
@@ -2169,6 +2200,10 @@ async function runAction(action) {
             return saveDocument();
         case "save-as":
             return saveDocumentAs();
+        case "export-svg":
+            return exportSvg(false);
+        case "export-tiled":
+            return exportSvg(true);
         case "arena-default":
             return setArena(4000, 3000);
         case "arena-3x4":
