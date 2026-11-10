@@ -1,4 +1,5 @@
-﻿#include <cstdint>
+﻿#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -807,4 +808,142 @@ TEST_CASE("API: diálogos nativos de abrir e salvar") {
     const json cancelled = api.call(R"({"id":5,"method":"doc.saveDialog"})");
     REQUIRE(cancelled["ok"].get<bool>());
     CHECK(cancelled["result"]["cancelled"] == true);
+}
+
+TEST_CASE("API: operações de forma contextual") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const json line = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})");
+    REQUIRE(line["ok"].get<bool>());
+    const std::uint64_t id = line["result"]["id"].get<std::uint64_t>();
+
+    const json converted = api.call_json(
+        {{"id", 3}, {"method", "doc.convertElement"}, {"params", {{"id", id}, {"shape", "arc90"}}}});
+    REQUIRE(converted["ok"].get<bool>());
+
+    const json info = api.call_json(
+        {{"id", 4}, {"method", "scene.elementInfo"}, {"params", {{"id", id}}}});
+    REQUIRE(info["ok"].get<bool>());
+    CHECK(info["result"]["type"] == "arc90");
+    CHECK(info["result"]["radius_mm"].get<double>() ==
+          doctest::Approx(100.0 / std::sqrt(2.0)));
+
+    const json radius = api.call_json(
+        {{"id", 5}, {"method", "doc.adjustRadius"}, {"params", {{"id", id}, {"factor", 2.0}}}});
+    REQUIRE(radius["ok"].get<bool>());
+    CHECK(radius["result"]["radius_mm"].get<double>() ==
+          doctest::Approx(100.0 / std::sqrt(2.0) * 2.0));
+
+    const json before_angle = api.call_json(
+        {{"id", 6}, {"method", "scene.elementInfo"}, {"params", {{"id", id}}}});
+    REQUIRE(before_angle["ok"].get<bool>());
+    const double angle_before = before_angle["result"]["angle_deg"].get<double>();
+
+    const json angle = api.call_json(
+        {{"id", 7}, {"method", "doc.adjustAngle"}, {"params", {{"id", id}, {"delta", 10.0}}}});
+    REQUIRE(angle["ok"].get<bool>());
+    CHECK(std::abs(angle["result"]["angle_deg"].get<double>() - angle_before) ==
+          doctest::Approx(10.0));
+
+    const json flipped = api.call_json(
+        {{"id", 8}, {"method", "doc.flipElement"}, {"params", {{"id", id}}}});
+    REQUIRE(flipped["ok"].get<bool>());
+
+    const json smoothed = api.call_json(
+        {{"id", 9}, {"method", "doc.smoothElement"}, {"params", {{"id", id}}}});
+    REQUIRE(smoothed["ok"].get<bool>());
+    const json smooth_info = api.call_json(
+        {{"id", 10}, {"method", "scene.elementInfo"}, {"params", {{"id", id}}}});
+    CHECK(smooth_info["result"]["type"] == "cubic");
+
+    const json split = api.call_json(
+        {{"id", 11}, {"method", "doc.splitElement"}, {"params", {{"id", id}, {"t", 0.5}}}});
+    REQUIRE(split["ok"].get<bool>());
+    CHECK(split["result"]["second"].get<std::uint64_t>() != id);
+
+    const json state = api.call(R"({"id":12,"method":"doc.state"})");
+    REQUIRE(state["ok"].get<bool>());
+    CHECK(state["result"]["elements"].size() == 2);
+    CHECK(state["result"]["connections"].size() == 1);
+
+    const json duplicate = api.call_json(
+        {{"id", 13}, {"method", "doc.duplicateElement"},
+         {"params", {{"id", id}, {"offset", {10.0, 10.0}}}}});
+    REQUIRE(duplicate["ok"].get<bool>());
+    CHECK(api.call(R"({"id":14,"method":"doc.state"})")["result"]["elements"].size() == 3);
+
+    const json mirrored = api.call_json(
+        {{"id", 15}, {"method", "doc.mirrorElement"}, {"params", {{"id", id}}}});
+    REQUIRE(mirrored["ok"].get<bool>());
+
+    const json difficulty = api.call_json(
+        {{"id", 16}, {"method", "doc.setElement"}, {"params", {{"id", id}, {"difficulty", 4}}}});
+    REQUIRE(difficulty["ok"].get<bool>());
+    const json manual = api.call_json(
+        {{"id", 17}, {"method", "scene.elementInfo"}, {"params", {{"id", id}}}});
+    CHECK(manual["result"]["difficulty"] == 4);
+    CHECK(manual["result"]["effective_difficulty"] == 4);
+}
+
+TEST_CASE("API: análise da pista em tempo real") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    api.call(R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[1000,0]}})");
+    const json arc = api.call(
+        R"({"id":3,"method":"doc.addArc","params":{"center":[0,0],"radius":40,"start":0,"sweep":90}})");
+    REQUIRE(arc["ok"].get<bool>());
+
+    const json analysis = api.call(R"({"id":4,"method":"scene.analysis"})");
+    REQUIRE(analysis["ok"].get<bool>());
+    const json& result = analysis["result"];
+    CHECK(result["straight_count"] == 1);
+    CHECK(result["curve_count"] == 1);
+    CHECK(result["total_length_mm"].get<double>() > 1000.0);
+    CHECK(result["difficulty"].get<double>() > 0.0);
+    CHECK(result["difficulty_label"].is_string());
+    CHECK(result["recommended_speed_mps"].get<double>() > 0.0);
+    CHECK(result["estimated_time_s"].get<double>() > 0.0);
+    CHECK(result["critical_points"].is_array());
+    CHECK_FALSE(result["critical_points"].empty());
+
+    const json element = api.call_json(
+        {{"id", 5}, {"method", "scene.elementInfo"},
+         {"params", {{"id", arc["result"]["id"]}}}});
+    REQUIRE(element["ok"].get<bool>());
+    CHECK(element["result"]["radius_mm"].get<double>() == doctest::Approx(40.0));
+    CHECK(element["result"]["auto_difficulty"] == 5);
+}
+
+TEST_CASE("API: conversão de módulo migra portas in/out") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const json line = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})");
+    const json module = api.call(
+        R"({"id":3,"method":"doc.addModule","params":{"template":"curve.90","params":{"radius":80}}})");
+    REQUIRE(module["ok"].get<bool>());
+
+    const std::uint64_t line_id = line["result"]["id"].get<std::uint64_t>();
+    const std::uint64_t module_id = module["result"]["id"].get<std::uint64_t>();
+
+    const json connected = api.call_json(
+        {{"id", 4}, {"method", "doc.connect"},
+         {"params", {{"a", {line_id, "end"}}, {"b", {module_id, "in"}}}}});
+    REQUIRE(connected["ok"].get<bool>());
+
+    const json converted = api.call_json(
+        {{"id", 5}, {"method", "doc.convertElement"},
+         {"params", {{"id", module_id}, {"shape", "cubic"}}}});
+    REQUIRE(converted["ok"].get<bool>());
+
+    const json state = api.call(R"({"id":6,"method":"doc.state"})");
+    REQUIRE(state["ok"].get<bool>());
+    REQUIRE(state["result"]["connections"].size() == 1);
+    const json& connection = state["result"]["connections"][0];
+    const bool uses_start =
+        (connection["a"][0] == module_id && connection["a"][1] == "start") ||
+        (connection["b"][0] == module_id && connection["b"][1] == "start");
+    CHECK(uses_start);
 }

@@ -9,7 +9,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 - **Impressão:** SVG 1:1 em mm, mosaico de páginas
 - **Simulação:** exportação JSON versionada (simulador virá depois)
 
-## Estado atual — M1 + M2 + edição
+## Estado atual — M1 + M2 + edição + análise
 
 - [x] Repositório, CMake, presets MSVC
 - [x] FastWebUI vendorizado e linkado como biblioteca estática
@@ -20,14 +20,16 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 - [x] Modelo de cena: arena, elementos (linha/Bézier/arco/módulo), portas,
       conexões, marcadores, guias e camadas
 - [x] Validação: arena, schema, formas degeneradas, templates, portas,
-      fechamento (0,01 mm), alinhamento (0,1°) e conexões duplicadas
+      fechamento (0,01 mm), alinhamento (0,1°), conexões duplicadas e
+      diagnósticos do traçado (curvas apertadas, viradas bruscas, sobreposição,
+      cruzamento conflitante, pista aberta, dificuldade e velocidade)
 - [x] Documento `.pftrack` (schema 1) com round-trip JSON completo
 - [x] API de documento/cena (`doc.*`, `scene.*`)
 - [x] Interface com faixa estilo Office (abas **Inserir**, **Documento** e
       **Exibir**), ícones SVG de curvas e inserção real de elementos
 - [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo nativo
       do Windows para abrir/salvar (com fallback em `<dialog>`)
-- [x] Testes com doctest e alvo `pf_tests` — 102 casos / 1572 asserções
+- [x] Testes com doctest e alvo `pf_tests` — 120 casos / 1742 asserções
 - [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
 - [x] Editor MVP com canvas interativo (M2)
@@ -53,6 +55,21 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
   - [x] Página padrão de 190 × 277 mm (A4 retrato com margens de 10 mm)
   - [x] Régua de calibração de 100 mm, rótulo de página e marcas de canto
   - [x] Grade de referência de 100/500 mm e faixas de largada/chegada
+- [x] Edição contextual e análise (M5)
+  - [x] Mini-faixas contextuais para a curva/reta selecionada, posicionadas
+        acima do elemento (nunca sobre ele) e fechadas ao perder a seleção
+  - [x] Curva: inverter direção, suavizar, fechar, espelhar, raio ±, ângulo ±,
+        duplicar, copiar/colar propriedades e excluir
+  - [x] Reta: ajustar comprimento, dividir segmento, inserir curva, duplicar,
+        largura, copiar/colar propriedades e excluir
+  - [x] Painel **Análise da pista** recalculado a cada alteração: comprimento
+        total, retas, curvas, cruzamentos, especiais, dificuldade, tempo
+        estimado e velocidade média recomendada
+  - [x] Pontuação de dificuldade (0–100) com notas Muito Fácil → Extremo e
+        dificuldade manual por elemento (0 = automática)
+  - [x] **Visão do Robô**: sobreposição de curvas apertadas, viradas bruscas,
+        perda de linha, trechos críticos de sensor e áreas de alta dificuldade
+  - [x] **Validar Pista** com lista clicável que navega até o trecho apontado
 
 ### API de documento e cena
 
@@ -72,8 +89,20 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.addModule` | `{template,params?,transform?,width?,layer?}` | `{id,rev}` |
 | `doc.removeElement` | `{id}` | `{rev,removed}` |
 | `doc.moveElement` | `{id,delta,merge?}` | `{id,delta,rev}` |
-| `doc.setElement` | `{id,width?,layer?,hidden?,locked?,label?,merge?}` | `{id,rev}` |
+| `doc.setElement` | `{id,width?,layer?,hidden?,locked?,label?,difficulty?,merge?}` | `{id,rev}` |
 | `doc.setGeometry` | `{id,a?,b?,p0?,p1?,p2?,p3?,center?,radius?,start?,sweep?,merge?}` | `{id,rev}` |
+| `doc.flipElement` | `{id}` | `{id,rev}` |
+| `doc.mirrorElement` | `{id,axis?}` | `{id,rev}` |
+| `doc.duplicateElement` | `{id,offset?}` | `{id,source,rev}` |
+| `doc.adjustLength` | `{id,length?,delta?}` | `{id,length,rev}` |
+| `doc.adjustRadius` | `{id,factor?,radius?,delta?}` | `{id,factor,radius_mm,rev}` |
+| `doc.setRadius` | `{id,radius}` | `{id,factor,radius_mm,rev}` |
+| `doc.adjustAngle` | `{id,delta?}` | `{id,delta,angle_deg,rev}` |
+| `doc.setAngle` | `{id,angle}` | `{id,delta,angle_deg,rev}` |
+| `doc.smoothElement` | `{id}` | `{id,rev}` |
+| `doc.closeElement` | `{id}` | `{id,rev}` |
+| `doc.convertElement` | `{id,shape}` | `{id,shape,rev}` |
+| `doc.splitElement` | `{id,t?}` | `{id,second,connection,rev}` |
 | `doc.undo` | `{}` | `{rev,label,can_undo,can_redo,history}` |
 | `doc.redo` | `{}` | `{rev,label,can_undo,can_redo,history}` |
 | `doc.history` | `{}` | `{can_undo,can_redo,undo,redo}` |
@@ -89,6 +118,8 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `scene.snap` | `{point,tolerance?,grid?,snap_grid?,ports?,elements?,ignore?}` | `{kind,point,distance,...}` |
 | `scene.validate` | `{}` | diagnósticos |
 | `scene.bounds` | `{}` | bbox da cena (inclui largura da faixa) |
+| `scene.analysis` | `{}` | métricas do traçado + pontos críticos |
+| `scene.elementInfo` | `{id}` | resumo do elemento (tipo, raio, ângulo, dificuldade) |
 
 `merge` agrupa alterações contínuas (arrastos) em um único passo de desfazer.
 `scene.snap` devolve `kind` = `port`, `element`, `grid` ou `none`; o encaixe tenta
@@ -113,11 +144,12 @@ A janela é dividida em quatro áreas:
     novo).
   - **Documento** — novo, abrir, salvar, salvar como, presets de arena
     (4 × 3 m e 3 × 4 m) e exportação (**Exportar SVG** e **Mosaico A4**).
-  - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias.
+  - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias,
+    além de **Visão do Robô** e **Validar Pista**.
 - **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
 - **Prancheta** ao centro, com grade, margem de segurança, cotas e cursor.
 - **Painel** à direita, com versão, compilador, contadores do documento,
-  seleção atual, arena e estado da ponte.
+  seleção atual, arena, estado da ponte e **Análise da pista**.
 
 As formas da faixa **Inserir** (e da biblioteca) entram em **modo de
 posicionamento**: o primeiro clique na arena ancora a forma, o movimento do
@@ -162,6 +194,38 @@ da página e marcas de canto para alinhar a colagem. Os arquivos seguem o padrã
 `<nome>-c<coluna>-r<linha>.svg`, com índices a partir de 1. Grade de referência
 (100/500 mm), calibração e guias podem ser ligadas/desligadas pelos parâmetros de
 `doc.exportSvg`.
+
+### Edição contextual, análise e validação
+
+Ao selecionar uma curva ou uma reta, uma **mini-faixa** aparece logo acima do
+elemento (nunca sobre ele) e fecha ao perder a seleção. As ações e os campos
+rápidos são:
+
+- **Curva** — inverter direção, suavizar (vira Bézier), fechar, espelhar,
+  raio ±, ângulo ±, duplicar, copiar/colar propriedades e excluir; campos de
+  raio (mm), ângulo (°), largura (mm) e dificuldade (Auto, 1–5).
+- **Reta** — ajustar comprimento, dividir segmento, inserir curva, duplicar,
+  largura, copiar/colar propriedades e excluir; campos de comprimento, largura
+  e dificuldade.
+
+O painel **Análise da pista** é recalculado a cada alteração do documento
+(`scene.analysis`) e mostra comprimento total, retas, curvas, cruzamentos,
+obstáculos especiais, índice de dificuldade (nota de Muito Fácil a Extremo),
+tempo estimado e velocidade média recomendada. A dificuldade considera
+quantidade e raio das curvas, curvas consecutivas, viradas bruscas, cruzamentos
+e elementos especiais; cada elemento pode ter dificuldade manual (1–5) ou
+automática (0).
+
+**Visão do Robô** (aba **Exibir**) desenha apenas sobreposições, sem alterar o
+traçado: curvas apertadas (< 150 mm), viradas bruscas (> 25°), possíveis perdas
+de linha (< 60 mm), trechos críticos de sensor (< 100 mm) e áreas de alta
+dificuldade.
+
+**Validar Pista** lista os problemas encontrados e cada item é clicável: a
+seleção e o pan vão direto ao trecho apontado. Códigos de validação do traçado:
+`track.open`, `track.overlap`, `track.difficulty`, `track.slow`, `curve.tight`,
+`turn.sharp` e `crossing.conflict`, além dos códigos de arena, forma, módulo,
+porta e conexão.
 
 ## Build
 

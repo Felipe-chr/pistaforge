@@ -17,8 +17,10 @@
 #include "app/bridge/dispatcher.hpp"
 #include "app/bridge/error.hpp"
 #include "app/bridge/state.hpp"
+#include "core/analysis/track_analysis.hpp"
 #include "core/io/scene_json.hpp"
 #include "core/io/scene_svg.hpp"
+#include "core/scene/element_ops.hpp"
 #include "core/scene/snap.hpp"
 #include "core/scene/validation.hpp"
 
@@ -363,6 +365,73 @@ Json export_svg(AppState& state, const Json& params) {
         {"height", state.scene.arena.height_mm},
         {"rev", state.scene.revision},
     };
+}
+
+/// Elemento editável (existe e não está bloqueado) ou erro estruturado.
+Element& element_or_fail(AppState& state, ElementId id) {
+    Element* element = state.scene.find_element(id);
+    if (element == nullptr) {
+        fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+    }
+    if (element->locked) {
+        fail("element_locked", "O elemento está bloqueado.");
+    }
+    return *element;
+}
+
+/// Renomeia portas `in`/`out` para `start`/`end` ao converter um módulo em primitiva.
+void migrate_module_ports(Scene& scene, ElementId id) {
+    for (Connection& connection : scene.connections) {
+        if (connection.a.element == id) {
+            if (connection.a.port == "in") connection.a.port = "start";
+            else if (connection.a.port == "out") connection.a.port = "end";
+        }
+        if (connection.b.element == id) {
+            if (connection.b.port == "in") connection.b.port = "start";
+            else if (connection.b.port == "out") connection.b.port = "end";
+        }
+    }
+}
+
+Json element_info_json(const Element& element) {
+    const std::optional<ShapeType> type = infer_shape_type(element.shape);
+    const std::optional<double> radius = shape_radius(element.shape);
+    const std::optional<double> angle = shape_angle_deg(element.shape);
+    const int automatic = element_auto_difficulty(element);
+    const auto endpoints = shape_endpoints(element.shape);
+
+    std::string type_name = "shape";
+    if (type) {
+        type_name = std::string{to_string(*type)};
+    } else if (std::holds_alternative<ArcSegment>(element.shape)) {
+        type_name = "arc";
+    } else if (const auto* module = std::get_if<ModuleInstance>(&element.shape)) {
+        type_name = module->template_id;
+    }
+
+    Json result{
+        {"id", element.id},
+        {"type", type_name},
+        {"width", element.width_mm},
+        {"difficulty", element.difficulty},
+        {"auto_difficulty", automatic},
+        {"effective_difficulty", element.difficulty > 0 ? element.difficulty : automatic},
+        {"flippable", type != ShapeType::Line &&
+                          !std::holds_alternative<LineSegment>(element.shape)},
+        {"splittable", std::holds_alternative<LineSegment>(element.shape) ||
+                           std::holds_alternative<ArcSegment>(element.shape) ||
+                           std::holds_alternative<CubicBezier>(element.shape)},
+        {"closed", std::holds_alternative<ArcSegment>(element.shape) &&
+                       std::abs(std::get<ArcSegment>(element.shape).sweep_angle) >
+                           2.0 * std::numbers::pi - 1e-3},
+    };
+    if (radius) result["radius_mm"] = *radius;
+    if (angle) result["angle_deg"] = *angle;
+    if (endpoints) {
+        result["start"] = Json::array({endpoints->first.x, endpoints->first.y});
+        result["end"] = Json::array({endpoints->second.x, endpoints->second.y});
+    }
+    return result;
 }
 
 } // namespace
@@ -801,6 +870,15 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                    if (params.contains("label")) {
                        element->label = string_param(params, "label");
                    }
+                   if (params.contains("difficulty")) {
+                       const double raw = number_param(params, "difficulty");
+                       const int level = static_cast<int>(std::lround(raw));
+                       if (level < 0 || level > 5) {
+                           fail("invalid_params",
+                                "Campo 'difficulty' deve estar entre 0 e 5.");
+                       }
+                       element->difficulty = level;
+                   }
 
                    return Json{{"id", id}};
                },
@@ -860,6 +938,219 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                    fail("unsupported", "Este elemento não permite editar a geometria.");
                },
                "merge");
+
+    add_change(dispatcher, state, "doc.flipElement", "Inverter curva",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element& element = element_or_fail(state, id);
+                   if (!flip_shape(element.shape)) {
+                       fail("unsupported", "Este elemento não pode ser invertido.");
+                   }
+                   return Json{{"id", id}};
+               });
+
+    add_change(dispatcher, state, "doc.mirrorElement", "Espelhar elemento",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element& element = element_or_fail(state, id);
+                   const BBox box = shape_bbox(element.shape);
+                   const double axis = params.contains("axis")
+                                           ? number_param(params, "axis")
+                                           : (box.is_valid() ? box.center().x : 0.0);
+                   if (!mirror_shape(element.shape, axis)) {
+                       fail("unsupported", "Este elemento não pode ser espelhado.");
+                   }
+                   return Json{{"id", id}};
+               });
+
+    add_change(dispatcher, state, "doc.duplicateElement", "Duplicar elemento",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   const Element* source = state.scene.find_element(id);
+                   if (source == nullptr) {
+                       fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                   }
+
+                   Vec2 offset{20.0, 20.0};
+                   if (params.contains("offset")) {
+                       offset = point_param(params, "offset");
+                   } else {
+                       offset = {number_or(params, "dx", 20.0), number_or(params, "dy", 20.0)};
+                   }
+
+                   Element copy = *source;
+                   copy.id = state.scene.allocate_id();
+                   translate(copy, offset);
+                   const ElementId created = copy.id;
+                   state.scene.elements.push_back(std::move(copy));
+                   return Json{{"id", created}, {"source", id}};
+               });
+
+    add_change(dispatcher, state, "doc.adjustLength", "Ajustar comprimento",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element& element = element_or_fail(state, id);
+
+                   double length = 0.0;
+                   if (params.contains("length")) {
+                       length = positive_number(params.at("length"), "length");
+                   } else {
+                       length = shape_length(element.shape) + number_or(params, "delta", 0.0);
+                   }
+                   if (!adjust_length(element.shape, length)) {
+                       fail("unsupported",
+                            "Ajuste de comprimento disponível apenas para retas.");
+                   }
+                   return Json{{"id", id}, {"length", length}};
+               });
+
+    const Handler radius_handler = [&state](const Json& params) {
+        require_object(params);
+        const ElementId id = id_param(params, "id");
+        Element& element = element_or_fail(state, id);
+        const std::optional<double> current = shape_radius(element.shape);
+        if (!current) {
+            fail("unsupported", "Este elemento não possui raio ajustável.");
+        }
+
+        double factor = 1.25;
+        if (params.contains("factor")) {
+            factor = positive_number(params.at("factor"), "factor");
+        } else if (params.contains("radius")) {
+            factor = positive_number(params.at("radius"), "radius") / *current;
+        } else if (params.contains("delta")) {
+            const double target = std::max(*current + number_param(params, "delta"), 1.0);
+            factor = target / *current;
+        }
+
+        if (!adjust_radius(element.shape, factor)) {
+            fail("unsupported", "Não foi possível ajustar o raio.");
+        }
+        return Json{
+            {"id", id},
+            {"factor", factor},
+            {"radius_mm", shape_radius(element.shape).value_or(0.0)},
+        };
+    };
+    add_change(dispatcher, state, "doc.adjustRadius", "Ajustar raio", radius_handler);
+    add_change(dispatcher, state, "doc.setRadius", "Definir raio", radius_handler);
+
+    const Handler angle_handler = [&state](const Json& params) {
+        require_object(params);
+        const ElementId id = id_param(params, "id");
+        Element& element = element_or_fail(state, id);
+        const std::optional<double> current = shape_angle_deg(element.shape);
+        if (!current) {
+            fail("unsupported", "Este elemento não possui ângulo ajustável.");
+        }
+
+        double delta = number_or(params, "delta", 15.0);
+        if (params.contains("angle")) {
+            delta = std::abs(number_param(params, "angle")) - std::abs(*current);
+        }
+        if (!adjust_angle(element.shape, delta)) {
+            fail("unsupported", "Não foi possível ajustar o ângulo.");
+        }
+        return Json{
+            {"id", id},
+            {"delta", delta},
+            {"angle_deg", shape_angle_deg(element.shape).value_or(0.0)},
+        };
+    };
+    add_change(dispatcher, state, "doc.adjustAngle", "Ajustar ângulo", angle_handler);
+    add_change(dispatcher, state, "doc.setAngle", "Definir ângulo", angle_handler);
+
+    add_change(dispatcher, state, "doc.smoothElement", "Suavizar curva",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element& element = element_or_fail(state, id);
+                   const bool was_module = std::holds_alternative<ModuleInstance>(element.shape);
+                   const std::optional<Shape> converted = smooth_shape(element.shape);
+                   if (!converted) {
+                       fail("unsupported", "Este elemento não pode ser suavizado.");
+                   }
+                   element.shape = *converted;
+                   if (was_module) migrate_module_ports(state.scene, id);
+                   return Json{{"id", id}};
+               });
+
+    add_change(dispatcher, state, "doc.closeElement", "Fechar curva",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element& element = element_or_fail(state, id);
+                   const bool was_module = std::holds_alternative<ModuleInstance>(element.shape);
+                   const std::optional<Shape> converted = closed_shape(element.shape);
+                   if (!converted) {
+                       fail("unsupported", "Este elemento não pode ser fechado.");
+                   }
+                   element.shape = *converted;
+                   if (was_module) migrate_module_ports(state.scene, id);
+                   return Json{{"id", id}};
+               });
+
+    add_change(dispatcher, state, "doc.convertElement", "Converter forma",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element& element = element_or_fail(state, id);
+                   const std::string name = string_param(params, "shape");
+                   const std::optional<ShapeType> type = shape_type_from_string(name);
+                   if (!type) {
+                       fail("invalid_params", "Forma desconhecida: " + name + ".");
+                   }
+                   const std::optional<Shape> converted = convert_shape(element.shape, *type);
+                   if (!converted) {
+                       fail("unsupported", "Não foi possível converter a forma.");
+                   }
+                   const bool was_module = std::holds_alternative<ModuleInstance>(element.shape);
+                   element.shape = *converted;
+                   if (was_module) migrate_module_ports(state.scene, id);
+                   return Json{{"id", id}, {"shape", std::string{to_string(*type)}}};
+               });
+
+    add_change(dispatcher, state, "doc.splitElement", "Dividir segmento",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const ElementId id = id_param(params, "id");
+                   Element& element = element_or_fail(state, id);
+                   const std::optional<SplitShapes> parts =
+                       split_shape(element.shape, number_or(params, "t", 0.5));
+                   if (!parts) {
+                       fail("unsupported", "Este elemento não pode ser dividido.");
+                   }
+
+                   Element second = element;
+                   second.id = state.scene.allocate_id();
+                   second.shape = parts->second;
+                   element.shape = parts->first;
+
+                   for (Connection& connection : state.scene.connections) {
+                       if (connection.a.element == id && connection.a.port == "end") {
+                           connection.a.element = second.id;
+                       }
+                       if (connection.b.element == id && connection.b.port == "end") {
+                           connection.b.element = second.id;
+                       }
+                   }
+
+                   const ElementId second_id = second.id;
+                   state.scene.elements.push_back(std::move(second));
+                   const ConnectionId connection_id =
+                       state.scene
+                           .add_connection(PortRef{id, "end"}, PortRef{second_id, "start"})
+                           .id;
+                   return Json{
+                       {"id", id},
+                       {"second", second_id},
+                       {"connection", connection_id},
+                   };
+               });
 
     add_change(dispatcher, state, "doc.setArena", "Alterar arena",
                [&state](const Json& params) {
@@ -1025,6 +1316,57 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
             result["direction"] = Json::array({snap.direction.x, snap.direction.y});
         }
         return result;
+    });
+
+    dispatcher.add("scene.analysis", [&state](const Json&) {
+        const TrackAnalysis analysis = analyze_track(state.scene);
+        const TrackMetrics& metrics = analysis.metrics;
+
+        Json critical = Json::array();
+        for (const CriticalPoint& point : analysis.critical_points) {
+            Json entry{
+                {"kind", std::string{to_string(point.kind)}},
+                {"x", point.position.x},
+                {"y", point.position.y},
+                {"severity", point.severity},
+            };
+            if (point.element != kInvalidId) entry["element"] = point.element;
+            if (point.t > 0.0) entry["t"] = point.t;
+            if (point.angle_deg > 0.0) entry["angle_deg"] = point.angle_deg;
+            if (point.radius_mm > 0.0) entry["radius_mm"] = point.radius_mm;
+            critical.push_back(std::move(entry));
+        }
+
+        return Json{
+            {"total_length_mm", metrics.total_length_mm},
+            {"straight_length_mm", metrics.straight_length_mm},
+            {"curve_length_mm", metrics.curve_length_mm},
+            {"straight_count", metrics.straight_count},
+            {"curve_count", metrics.curve_count},
+            {"crossing_count", metrics.crossing_count},
+            {"special_count", metrics.special_count},
+            {"element_count", metrics.element_count},
+            {"connection_count", metrics.connection_count},
+            {"consecutive_curve_links", metrics.consecutive_curve_links},
+            {"sharp_turn_count", metrics.sharp_turn_count},
+            {"tight_curve_count", metrics.tight_curve_count},
+            {"difficulty", metrics.difficulty},
+            {"difficulty_label", metrics.difficulty_label},
+            {"estimated_time_s", metrics.estimated_time_s},
+            {"recommended_speed_mps", metrics.recommended_speed_mps},
+            {"critical_points", std::move(critical)},
+            {"rev", state.scene.revision},
+        };
+    });
+
+    dispatcher.add("scene.elementInfo", [&state](const Json& params) {
+        require_object(params);
+        const ElementId id = id_param(params, "id");
+        const Element* element = state.scene.find_element(id);
+        if (element == nullptr) {
+            fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+        }
+        return element_info_json(*element);
     });
 
     dispatcher.add("scene.validate", [&state](const Json&) {

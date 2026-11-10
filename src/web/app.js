@@ -16,6 +16,11 @@ const state = {
     drag: null,
     snap: null,
     placement: null,
+    analysis: null,
+    robotVision: false,
+    ribbon: { elementId: null, kind: null, info: null, token: 0 },
+    propertiesClipboard: null,
+    validation: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -176,6 +181,13 @@ async function refreshDoc() {
     updateSelectionPanel();
     syncLayerToggles();
     draw();
+    await refreshAnalysis();
+    try {
+        await updateRibbon();
+    } catch {
+        hideRibbon();
+    }
+    if (state.robotVision) draw();
     return doc;
 }
 
@@ -215,6 +227,426 @@ function updateSelectionPanel() {
     el("selection-hint").textContent =
         "Arraste as alças para editar a geometria · arraste o traçado para mover · Del exclui.";
 }
+
+/* ------------------------------------------- análise, validação e mini-ribbon */
+
+function difficultyKey(label) {
+    switch (label) {
+        case "Fácil":
+            return "facil";
+        case "Médio":
+            return "medio";
+        case "Difícil":
+            return "dificil";
+        case "Extremo":
+            return "extremo";
+        default:
+            return "";
+    }
+}
+
+async function refreshAnalysis() {
+    try {
+        state.analysis = await rpc("scene.analysis");
+    } catch {
+        state.analysis = null;
+    }
+    renderAnalysis();
+}
+
+function renderAnalysis() {
+    const metrics = state.analysis;
+    if (!metrics) return;
+
+    el("analysis-length").textContent =
+        `${(metrics.total_length_mm / 1000).toFixed(2)} m`;
+    el("analysis-straights").textContent = String(metrics.straight_count ?? 0);
+    el("analysis-curves").textContent = String(metrics.curve_count ?? 0);
+    el("analysis-crossings").textContent = String(metrics.crossing_count ?? 0);
+    el("analysis-specials").textContent = String(metrics.special_count ?? 0);
+    el("analysis-time").textContent = `${(metrics.estimated_time_s ?? 0).toFixed(1)} s`;
+    el("analysis-speed").textContent =
+        `${(metrics.recommended_speed_mps ?? 0).toFixed(2)} m/s`;
+
+    const score = Math.round(metrics.difficulty ?? 0);
+    el("difficulty-score").textContent = String(score);
+    el("difficulty-label").textContent = metrics.difficulty_label ?? "Muito Fácil";
+    el("difficulty-badge").dataset.level = difficultyKey(metrics.difficulty_label);
+}
+
+function elementWorldBBox(element) {
+    const polylines = elementPolylines(element);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const line of polylines) {
+        for (const [x, y] of line) {
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+        }
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+    return { minX, minY, maxX, maxY };
+}
+
+function ribbonKind(element) {
+    if (!element) return null;
+    if (element.type === "line") return "straight";
+    if (element.type === "arc" || element.type === "cubic") return "curve";
+    if (element.type === "module") {
+        return element.template === "curve.90" ? "curve" : "other";
+    }
+    return "other";
+}
+
+function ribbonMarkup(kind, element, info) {
+    const width = Math.round(element.width ?? 19);
+    const manual = Number(info.difficulty ?? element.difficulty ?? 0);
+    const difficulty = [0, 1, 2, 3, 4, 5]
+        .map(
+            (level) =>
+                `<option value="${level}"${level === manual ? " selected" : ""}>` +
+                `${level === 0 ? "Auto" : level}</option>`
+        )
+        .join("");
+
+    const actionRow =
+        kind === "curve"
+            ? `
+            <div class="mini-row">
+                <button class="mini-btn" data-ribbon="flip" title="Inverter direção da curva">Inverter</button>
+                <button class="mini-btn" data-ribbon="smooth" title="Converter para curva suave">Suave</button>
+                <button class="mini-btn" data-ribbon="close" title="Converter para curva fechada">Fechar</button>
+                <button class="mini-btn" data-ribbon="mirror" title="Espelhar curva">Espelhar</button>
+            </div>
+            <div class="mini-row">
+                <button class="mini-btn" data-ribbon="radius-down" title="Diminuir raio">Raio −</button>
+                <button class="mini-btn" data-ribbon="radius-up" title="Aumentar raio">Raio +</button>
+                <button class="mini-btn" data-ribbon="angle-down" title="Diminuir ângulo">Ângulo −</button>
+                <button class="mini-btn" data-ribbon="angle-up" title="Aumentar ângulo">Ângulo +</button>
+            </div>`
+            : kind === "straight"
+              ? `
+            <div class="mini-row">
+                <button class="mini-btn" data-ribbon="split" title="Dividir o segmento ao meio">Dividir</button>
+                <button class="mini-btn" data-ribbon="insert-curve" title="Inserir uma curva no trecho">Inserir curva</button>
+            </div>`
+              : "";
+
+    const quickProps =
+        kind === "curve"
+            ? `
+            <label class="mini-field">Raio (mm)<input data-prop="radius" type="number" min="1" step="5" value="${Math.round(info.radius_mm ?? 0)}"></label>` +
+              (element.type === "module"
+                  ? ""
+                  : `
+            <label class="mini-field">Ângulo (°)<input data-prop="angle" type="number" min="1" max="180" step="5" value="${Math.round(Math.abs(info.angle_deg ?? 0))}"></label>`)
+            : kind === "straight"
+              ? `
+            <label class="mini-field">Comprimento (mm)<input data-prop="length" type="number" min="1" step="10" value="${Math.round(elementLineLength(element))}"></label>`
+              : "";
+
+    return `
+        <div class="mini-group">
+            <div class="mini-stack">
+                ${actionRow}
+                <div class="mini-row">
+                    <button class="mini-btn" data-ribbon="duplicate" title="Duplicar elemento">Duplicar</button>
+                    <button class="mini-btn" data-ribbon="copy-props" title="Copiar propriedades">Copiar</button>
+                    <button class="mini-btn" data-ribbon="paste-props" title="Colar propriedades">Colar</button>
+                    <button class="mini-btn danger" data-ribbon="delete" title="Excluir elemento">Excluir</button>
+                </div>
+                <span class="mini-group-title">${kind === "curve" ? "Curva" : kind === "straight" ? "Reta" : "Elemento"}</span>
+            </div>
+        </div>
+        <div class="mini-group mini-props">
+            ${quickProps}
+            <label class="mini-field">Largura (mm)<input data-prop="width" type="number" min="1" step="1" value="${width}"></label>
+            <label class="mini-field">Dificuldade<select data-prop="difficulty">${difficulty}</select></label>
+        </div>`;
+}
+
+function elementLineLength(element) {
+    if (!element || element.type !== "line") return 0;
+    return Math.hypot(element.b[0] - element.a[0], element.b[1] - element.a[1]);
+}
+
+function hideRibbon() {
+    const ribbon = el("element-ribbon");
+    if (!ribbon) return;
+    state.ribbon.elementId = null;
+    state.ribbon.kind = null;
+    state.ribbon.info = null;
+    state.ribbon.token += 1;
+    ribbon.classList.remove("open");
+    ribbon.setAttribute("aria-hidden", "true");
+}
+
+function positionRibbon(element) {
+    const ribbon = el("element-ribbon");
+    const view = state.view;
+    const box = elementWorldBBox(element);
+    if (!ribbon || !view || !box) return;
+
+    const canvasRect = el("canvas").getBoundingClientRect();
+    const topLeft = worldToScreen({ x: box.minX, y: box.minY });
+    const bottomRight = worldToScreen({ x: box.maxX, y: box.maxY });
+    const centerX = canvasRect.left + (topLeft.x + bottomRight.x) / 2;
+    const topY = canvasRect.top + topLeft.y;
+    const bottomY = canvasRect.top + bottomRight.y;
+    const height = ribbon.offsetHeight || 140;
+    const width = ribbon.offsetWidth || 300;
+
+    const viewportWidth = document.documentElement.clientWidth;
+    const minX = width / 2 + 8;
+    const maxX = viewportWidth - width / 2 - 8;
+    const clampedX =
+        maxX < minX ? viewportWidth / 2 : Math.min(Math.max(centerX, minX), maxX);
+
+    const below = topY - height - 18 < canvasRect.top + 6;
+    ribbon.classList.toggle("below", below);
+    ribbon.style.left = `${clampedX}px`;
+    ribbon.style.top = `${below ? bottomY : topY}px`;
+}
+
+function syncRibbonValues(element, info) {
+    const setValue = (name, value) => {
+        const input = document.querySelector(`#element-ribbon [data-prop="${name}"]`);
+        if (input && document.activeElement !== input) input.value = String(value);
+    };
+
+    if (info.radius_mm != null) setValue("radius", Math.round(info.radius_mm));
+    if (info.angle_deg != null) setValue("angle", Math.round(Math.abs(info.angle_deg)));
+    setValue("width", Math.round(element.width ?? 19));
+    setValue("difficulty", Number(info.difficulty ?? element.difficulty ?? 0));
+    if (element.type === "line") setValue("length", Math.round(elementLineLength(element)));
+}
+
+async function updateRibbon() {
+    const ribbon = el("element-ribbon");
+    if (!ribbon) return;
+
+    const id = state.selection;
+    const element = state.doc?.elements?.find((candidate) => candidate.id === id);
+    if (!element) {
+        hideRibbon();
+        return;
+    }
+
+    const token = ++state.ribbon.token;
+    let info = null;
+    try {
+        info = await rpc("scene.elementInfo", { id });
+    } catch {
+        info = null;
+    }
+    if (token !== state.ribbon.token || state.selection !== id) return;
+
+    const kind = ribbonKind(element);
+    const rebuild = state.ribbon.elementId !== id || state.ribbon.kind !== kind;
+    state.ribbon.elementId = id;
+    state.ribbon.kind = kind;
+    state.ribbon.info = info;
+
+    if (rebuild) {
+        ribbon.innerHTML = ribbonMarkup(kind, element, info ?? {});
+        ribbon.classList.remove("open");
+        ribbon.setAttribute("aria-hidden", "false");
+        positionRibbon(element);
+        requestAnimationFrame(() => ribbon.classList.add("open"));
+    } else {
+        syncRibbonValues(element, info ?? {});
+        positionRibbon(element);
+    }
+}
+
+async function applyRibbonProperty(prop, raw) {
+    const id = state.selection;
+    if (id == null) return;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+
+    if (prop === "radius") {
+        await rpc("doc.setRadius", { id, radius: value });
+    } else if (prop === "angle") {
+        await rpc("doc.setAngle", { id, angle: value });
+    } else if (prop === "width") {
+        await rpc("doc.setElement", { id, width: value });
+    } else if (prop === "difficulty") {
+        await rpc("doc.setElement", { id, difficulty: value });
+    } else if (prop === "length") {
+        await rpc("doc.adjustLength", { id, length: value });
+    }
+    await refreshDoc();
+}
+
+async function ribbonAction(action) {
+    const id = state.selection;
+    if (id == null) return;
+    const info = state.ribbon.info ?? {};
+
+    switch (action) {
+        case "flip":
+            await rpc("doc.flipElement", { id });
+            break;
+        case "mirror":
+            await rpc("doc.mirrorElement", { id });
+            break;
+        case "smooth":
+            await rpc("doc.smoothElement", { id });
+            break;
+        case "close":
+            await rpc("doc.closeElement", { id });
+            break;
+        case "radius-up":
+            await rpc("doc.adjustRadius", { id, factor: 1.25 });
+            break;
+        case "radius-down":
+            await rpc("doc.adjustRadius", { id, factor: 0.8 });
+            break;
+        case "angle-up":
+            await rpc("doc.adjustAngle", { id, delta: 15 });
+            break;
+        case "angle-down":
+            await rpc("doc.adjustAngle", { id, delta: -15 });
+            break;
+        case "split":
+            await rpc("doc.splitElement", { id, t: 0.5 });
+            break;
+        case "insert-curve":
+            await rpc("doc.convertElement", { id, shape: "arc90" });
+            break;
+        case "duplicate": {
+            const copy = await rpc("doc.duplicateElement", { id });
+            state.selection = copy.id;
+            break;
+        }
+        case "copy-props":
+            state.propertiesClipboard = {
+                width: state.ribbon.info?.width ?? 19,
+                difficulty: state.ribbon.info?.difficulty ?? 0,
+                radius: info.radius_mm ?? null,
+                angle:
+                    state.ribbon.kind === "curve" && info.angle_deg
+                        ? Math.abs(info.angle_deg)
+                        : null,
+            };
+            setStatus("Propriedades copiadas.");
+            return;
+        case "paste-props": {
+            const clip = state.propertiesClipboard;
+            if (!clip) {
+                setStatus("Nenhuma propriedade copiada.");
+                return;
+            }
+            await rpc("doc.setElement", {
+                id,
+                width: clip.width,
+                difficulty: clip.difficulty,
+            });
+            if (state.ribbon.kind === "curve") {
+                if (clip.radius != null && info.radius_mm != null) {
+                    await rpc("doc.setRadius", { id, radius: clip.radius });
+                }
+                if (clip.angle != null && info.angle_deg != null) {
+                    await rpc("doc.setAngle", { id, angle: clip.angle });
+                }
+            }
+            break;
+        }
+        case "delete":
+            await deleteSelection();
+            return;
+        default:
+            return;
+    }
+
+    await refreshDoc();
+    setStatus(`Ação aplicada ao elemento ${id}.`);
+}
+
+function toggleRobotVision() {
+    state.robotVision = !state.robotVision;
+    el("robot-legend").hidden = !state.robotVision;
+    document
+        .querySelectorAll("#robot-vision-ribbon, #robot-vision-side")
+        .forEach((button) => button.classList.toggle("active", state.robotVision));
+    setStatus(
+        state.robotVision
+            ? "Visão do Robô ativada · pontos críticos destacados."
+            : "Visão do Robô desativada."
+    );
+    draw();
+}
+
+function renderValidation(diagnostics) {
+    const list = el("validation-list");
+    list.innerHTML = "";
+    for (const diagnostic of diagnostics) {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.className = "validation-item";
+        button.dataset.severity = diagnostic.severity ?? "info";
+        if (diagnostic.element != null) button.dataset.focus = diagnostic.element;
+
+        const dot = document.createElement("span");
+        dot.className = "validation-dot";
+
+        const body = document.createElement("span");
+        const message = document.createElement("span");
+        message.textContent = diagnostic.message ?? diagnostic.code ?? "Problema";
+        const code = document.createElement("span");
+        code.className = "validation-code";
+        code.textContent = diagnostic.code ?? "";
+        body.append(message, code);
+
+        button.append(dot, body);
+        item.appendChild(button);
+        list.appendChild(item);
+    }
+}
+
+async function validateTrack() {
+    const diagnostics = await rpc("scene.validate");
+    state.validation = diagnostics;
+    renderValidation(diagnostics);
+
+    const errors = diagnostics.filter((entry) => entry.severity === "error").length;
+    const warnings = diagnostics.filter((entry) => entry.severity === "warning").length;
+    el("validation-summary").textContent =
+        diagnostics.length === 0
+            ? "Nenhum problema encontrado."
+            : `${errors} erro(s) · ${warnings} aviso(s) · clique para navegar.`;
+    setStatus(
+        diagnostics.length === 0
+            ? "Validação concluída: nenhum problema encontrado."
+            : `Validação concluída: ${errors} erro(s) e ${warnings} aviso(s).`
+    );
+}
+
+async function focusElement(id) {
+    const numeric = Number(id);
+    if (!Number.isFinite(numeric)) return;
+
+    state.selection = numeric;
+    const element = state.doc?.elements?.find((candidate) => candidate.id === numeric);
+    const view = state.view;
+    const arena = docArena();
+    const box = element ? elementWorldBBox(element) : null;
+    if (view && box) {
+        const centerX = (box.minX + box.maxX) / 2;
+        const centerY = (box.minY + box.maxY) / 2;
+        state.pan.x = (arena.width * view.scale) / 2 - centerX * view.scale;
+        state.pan.y = (arena.height * view.scale) / 2 - centerY * view.scale;
+    }
+
+    await refreshDoc();
+    setStatus(`Navegando para o elemento ${numeric}.`);
+}
+
 
 /* ----------------------------------------------------------------- canvas */
 
@@ -779,6 +1211,49 @@ function drawHandles(ctx) {
     ctx.restore();
 }
 
+function drawRobotVision(ctx) {
+    const points = state.analysis?.critical_points ?? [];
+    if (points.length === 0) return;
+
+    const colors = {
+        tight_curve: "#f97316",
+        abrupt_turn: "#ef4444",
+        line_loss: "#dc2626",
+        sensor_critical: "#eab308",
+        high_difficulty: "#a855f7",
+    };
+
+    ctx.save();
+    for (const point of points) {
+        const p = worldToScreen({ x: point.x, y: point.y });
+        const color = colors[point.kind] ?? "#2563eb";
+        const severity = Math.min(Math.max(point.severity ?? 0.5, 0.2), 1);
+        const radius = 10 + severity * 20;
+
+        ctx.globalAlpha = 0.14 + severity * 0.18;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        if (point.kind === "abrupt_turn") {
+            ctx.beginPath();
+            ctx.moveTo(p.x - 5, p.y + 4);
+            ctx.lineTo(p.x, p.y - 4);
+            ctx.lineTo(p.x + 5, p.y + 4);
+            ctx.stroke();
+        }
+    }
+    ctx.restore();
+}
+
 function draw() {
     const canvas = el("canvas");
     if (!canvas) return;
@@ -920,6 +1395,7 @@ function draw() {
     if (doc) {
         drawGuides(ctx, doc, layers);
         drawElements(ctx, doc, layers, scale);
+        if (state.robotVision) drawRobotVision(ctx);
         drawMarkers(ctx, doc, layers);
     }
 
@@ -1837,6 +2313,7 @@ async function onPointerDown(event) {
     if (pick.element != null) {
         state.selection = pick.element;
         updateSelectionPanel();
+        updateRibbon().catch(() => {});
 
         if (!drag.ended) {
             const grab = pick.point ?? [point.x, point.y];
@@ -1860,6 +2337,7 @@ async function onPointerDown(event) {
     } else {
         state.selection = null;
         updateSelectionPanel();
+        hideRibbon();
         state.cursor = {
             x: Math.round(point.x),
             y: Math.round(point.y),
@@ -2192,6 +2670,10 @@ async function runAction(action) {
             return redo();
         case "delete":
             return deleteSelection();
+        case "validate-track":
+            return validateTrack();
+        case "robot-vision":
+            return toggleRobotVision();
         case "new":
             return newDocument();
         case "open":
@@ -2236,6 +2718,24 @@ async function init() {
             return;
         }
 
+        const focusTarget = event.target.closest("[data-focus]");
+        if (focusTarget) {
+            event.preventDefault();
+            focusElement(focusTarget.dataset.focus).catch((error) => {
+                setStatus(String(error.message ?? error));
+            });
+            return;
+        }
+
+        const ribbonButton = event.target.closest("[data-ribbon]");
+        if (ribbonButton) {
+            event.preventDefault();
+            ribbonAction(ribbonButton.dataset.ribbon).catch((error) => {
+                setStatus(String(error.message ?? error));
+            });
+            return;
+        }
+
         const tool = event.target.closest("[data-tool]");
         if (tool) {
             event.preventDefault();
@@ -2253,6 +2753,14 @@ async function init() {
     });
 
     document.addEventListener("change", (event) => {
+        const property = event.target.closest("[data-prop]");
+        if (property) {
+            applyRibbonProperty(property.dataset.prop, property.value).catch((error) => {
+                setStatus(String(error.message ?? error));
+            });
+            return;
+        }
+
         const input = event.target.closest(".layer-toggle");
         if (!input) return;
         setLayer(input.dataset.layer, input.checked).catch((error) => {
@@ -2340,6 +2848,7 @@ async function init() {
                 } else {
                     state.selection = null;
                     updateSelectionPanel();
+                    hideRibbon();
                     setTool("select");
                     draw();
                 }

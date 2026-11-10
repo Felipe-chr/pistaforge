@@ -266,6 +266,27 @@
 
                 <div class="ribbon-group">
                     <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="validate-track" title="Verificar desconexões, sobreposições, curvas fechadas e dificuldade">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M14 22 L26 33 L52 8"/>
+                                <circle cx="26" cy="33" r="2.4" fill="currentColor"/>
+                            </svg>
+                            <span>Validar Pista</span>
+                        </button>
+                        <button class="ribbon-button" data-action="robot-vision" id="robot-vision-ribbon" title="Destacar curvas críticas e pontos de perda de linha">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <circle cx="32" cy="20" r="9"/>
+                                <circle cx="32" cy="20" r="3" fill="currentColor"/>
+                                <path d="M32 6 V11 M32 29 V34 M18 20 H23 M41 20 H46" opacity="0.7"/>
+                            </svg>
+                            <span>Visão do Robô</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Análise</div>
+                </div>
+
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
                         <button class="ribbon-button" data-action="export-svg" title="Exportar a arena em SVG 1:1 (mm)">
                             <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
                                 <path d="M14 6 H38 L50 18 V34 H14 Z"/>
@@ -393,6 +414,14 @@
             <strong>M2 · edição</strong>
             <span>clique para selecionar · arraste para mover · roda para zoom</span>
         </div>
+        <div class="robot-legend" id="robot-legend" hidden>
+            <span class="robot-legend-title">Visão do Robô</span>
+            <span class="robot-chip tight">Curva fechada</span>
+            <span class="robot-chip turn">Virada brusca</span>
+            <span class="robot-chip loss">Perda de linha</span>
+            <span class="robot-chip sensor">Sensor crítico</span>
+            <span class="robot-chip hard">Alta dificuldade</span>
+        </div>
     </main>
 
     <aside class="sidebar right">
@@ -413,6 +442,31 @@
                 <div><dt>Revisão</dt><dd id="doc-revision">0</dd></div>
                 <div><dt>Cursor</dt><dd id="doc-cursor" class="mono">300, 300</dd></div>
             </dl>
+        </section>
+
+        <section class="panel analysis-panel">
+            <h2>Análise da pista</h2>
+            <div class="difficulty-badge" id="difficulty-badge">
+                <span class="difficulty-score" id="difficulty-score">0</span>
+                <span class="difficulty-label" id="difficulty-label">Muito Fácil</span>
+            </div>
+            <dl class="facts">
+                <div><dt>Comprimento</dt><dd id="analysis-length">—</dd></div>
+                <div><dt>Retas</dt><dd id="analysis-straights">0</dd></div>
+                <div><dt>Curvas</dt><dd id="analysis-curves">0</dd></div>
+                <div><dt>Cruzamentos</dt><dd id="analysis-crossings">0</dd></div>
+                <div><dt>Especiais</dt><dd id="analysis-specials">0</dd></div>
+                <div><dt>Tempo estimado</dt><dd id="analysis-time">—</dd></div>
+                <div><dt>Velocidade média</dt><dd id="analysis-speed">—</dd></div>
+            </dl>
+            <button class="btn wide" data-action="robot-vision" id="robot-vision-side">Visão do Robô</button>
+        </section>
+
+        <section class="panel validation-panel">
+            <h2>Validação</h2>
+            <button class="btn primary wide" data-action="validate-track">Validar Pista</button>
+            <p class="hint" id="validation-summary">Nenhuma validação executada.</p>
+            <ul id="validation-list" class="validation-list"></ul>
         </section>
 
         <section class="panel">
@@ -455,6 +509,8 @@
             <span>mm · 1:1</span>
         </span>
     </footer>
+
+    <div id="element-ribbon" class="element-ribbon" role="toolbar" aria-label="Propriedades do elemento" aria-hidden="true"></div>
 
     <dialog id="path-dialog" class="path-dialog">
         <form method="dialog">

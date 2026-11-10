@@ -45,6 +45,8 @@ struct Element {
     bool hidden{false};
     bool locked{false};
     std::string label;
+    /// Dificuldade manual de 1 a 5 (0 = automática). Persistida só quando > 0.
+    int difficulty{0};
 };
 
 /// Portas `start`/`end` para primitivas e portas do template para módulos.

@@ -39,6 +39,7 @@ json element_to_json(const Element& element) {
     if (element.hidden) out["hidden"] = true;
     if (element.locked) out["locked"] = true;
     if (!element.label.empty()) out["label"] = element.label;
+    if (element.difficulty > 0) out["difficulty"] = element.difficulty;
 
     std::visit(
         Overloaded{
@@ -88,6 +89,7 @@ Element element_from_json(const json& value) {
     element.hidden = value.value("hidden", false);
     element.locked = value.value("locked", false);
     element.label = value.value("label", std::string{});
+    element.difficulty = value.value("difficulty", 0);
 
     const std::string type = value.at("type").get<std::string>();
     if (type == "line") {

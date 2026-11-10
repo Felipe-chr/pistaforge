@@ -29,8 +29,10 @@ add_library(pf_core STATIC
     src/core/geometry/line.cpp
     src/core/geometry/arc.cpp
     src/core/geometry/index.cpp
+    src/core/analysis/track_analysis.cpp
     src/core/scene/module.cpp
     src/core/scene/element.cpp
+    src/core/scene/element_ops.cpp
     src/core/scene/scene.cpp
     src/core/scene/history.cpp
     src/core/scene/snap.cpp
@@ -96,6 +98,8 @@ add_executable(pf_tests
     tests/test_scene.cpp
     tests/test_history.cpp
     tests/test_snap.cpp
+    tests/test_element_ops.cpp
+    tests/test_track_analysis.cpp
     tests/test_scene_json.cpp
     tests/test_svg.cpp
     tests/test_dispatcher.cpp
