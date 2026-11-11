@@ -27,6 +27,7 @@
 #include "core/scene/snap.hpp"
 #include "core/scene/validation.hpp"
 #include "core/sim/path_table.hpp"
+#include "core/sim/sim_doc.hpp"
 
 namespace pf {
 namespace {
@@ -583,6 +584,42 @@ Json export_table(AppState& state, const Json& params) {
     };
 }
 
+/// Exporta o documento do simulador (`.pfsim.json`).
+Json export_sim(AppState& state, const Json& params) {
+    require_object(params);
+    const std::filesystem::path path{string_param(params, "path")};
+
+    sim::SimDocOptions options;
+    options.step_mm = number_or(params, "step", 50.0);
+    options.tolerance_mm = number_or(params, "tolerance", 0.25);
+    options.generator_version = PF_VERSION;
+    if (!(options.step_mm > 0.0)) fail("invalid_params", "O passo deve ser positivo.");
+    if (!(options.tolerance_mm > 0.0)) {
+        fail("invalid_params", "A tolerância deve ser positiva.");
+    }
+
+    const sim::SimDocument document = sim::build_sim_document(state.scene, options);
+
+    if (path.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(path.parent_path(), error);
+    }
+    write_text_file(path, document.json);
+
+    const PathTable& table = document.table;
+    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    return Json{
+        {"files", Json::array({path.string()})},
+        {"schema", sim::kSimSchema},
+        {"points", table.samples.size()},
+        {"total_length_mm", table.total_length_mm},
+        {"step_mm", table.step_mm},
+        {"closed", table.closed},
+        {"ordered", table.ordered},
+        {"rev", state.scene.revision},
+    };
+}
+
 /// Elemento editável (existe e não está bloqueado) ou erro estruturado.
 Element& element_or_fail(AppState& state, ElementId id) {
     Element* element = state.scene.find_element(id);
@@ -909,6 +946,35 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         Json forwarded = params;
         forwarded["path"] = chosen->string();
         return export_table(state, forwarded);
+    });
+
+    dispatcher.add("doc.exportSim", [&state](const Json& params) -> Json {
+        return export_sim(state, params);
+    });
+
+    dispatcher.add("doc.exportSimDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = true;
+        request.title = "Exportar documento do simulador";
+        request.initial_path = dialog_directory(state);
+        request.default_name = state.path.empty() ? "pista.pfsim.json"
+                                                  : state.path.stem().string() + ".pfsim.json";
+        request.filter_label = "Documento do simulador (*.json)";
+        request.filter_pattern = "*.json";
+        request.default_extension = "json";
+
+        const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
+        if (!chosen) return Json{{"cancelled", true}};
+        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+
+        Json forwarded = params;
+        forwarded["path"] = chosen->string();
+        return export_sim(state, forwarded);
     });
 
     add_change(dispatcher, state, "doc.addLine", "Inserir linha", [&state](const Json& params) {

@@ -2245,6 +2245,13 @@ const EXPORT_FIELDS = {
             { key: "step", label: "Passo da matriz (mm)", kind: "number", default: 50, min: 5, step: 5 },
         ],
     },
+    sim: {
+        title: "Exportar documento do simulador",
+        fields: [
+            { key: "step", label: "Passo da linha central (mm)", kind: "number", default: 50, min: 5, step: 5 },
+            { key: "tolerance", label: "Tolerância das curvas (mm)", kind: "number", default: 0.25, min: 0.05, step: 0.05 },
+        ],
+    },
 };
 
 function defaultExportOptions(kind) {
@@ -2486,6 +2493,23 @@ async function exportTable() {
         params: options,
         describe: (result) =>
             `Matriz: ${result.points} pontos · ${result.files[0] ?? ""}`,
+    });
+}
+
+async function exportSim() {
+    const options = await askExportOptions("sim");
+    if (!options) {
+        setStatus("Exportação cancelada.");
+        return;
+    }
+    return runExport({
+        dialog: "doc.exportSimDialog",
+        direct: "doc.exportSim",
+        title: "Exportar documento do simulador:",
+        fallback: "C:/Temp/pista.pfsim.json",
+        params: options,
+        describe: (result) =>
+            `Simulador: ${result.points} pontos · ${result.files[0] ?? ""}`,
     });
 }
 
@@ -3115,6 +3139,8 @@ async function runAction(action) {
             return exportRobot();
         case "export-table":
             return exportTable();
+        case "export-sim":
+            return exportSim();
         case "arena-default":
             return applyArena({ width: 4000, height: 3000, margin: 100 });
         case "arena-3x4":

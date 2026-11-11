@@ -80,6 +80,8 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
         (`-instrucoes.txt`) com `INICIO`, `AVANCAR`, `VIRAR_DIR`, `VIRAR_ESQ`, `FIM`
   - [x] **Matriz de coordenadas** (CSV) ordenada por conexões, com `s`, posição,
         rumo, curvatura, largura e elemento — base do simulador
+  - [x] **Simulador**: documento `.pfsim.json` (schema 1) com arena, linha
+        central amostrada, trechos, métricas e pontos críticos
   - [x] `scene.pathTable` devolve a matriz como JSON e `scene.analysis` inclui
         contagem de pontos e passo
 - [x] Proteção de dados e ajustes de interface (M7)
@@ -92,6 +94,9 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
         validação de valores e preferências lembradas durante a sessão
   - [x] **Configurar arena** no painel: nome, largura, altura e margem, com
         validação (dimensões positivas e margem compatível)
+- [x] Documentação e formatos (M8)
+  - [x] `docs/formato-pftrack.md` (schema 1) e `docs/formato-pfsim.md`
+  - [x] ADRs: cruzamentos em linha reta, formatos versionados e domínio em C++
 
 ### API de documento e cena
 
@@ -113,6 +118,8 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.exportRobotDialog` | mesmos parâmetros | `{files,points,...}` ou `{cancelled:true}` |
 | `doc.exportTable` | `{path,step?}` | `{files,points,total_length_mm,step_mm,closed,ordered,rev}` |
 | `doc.exportTableDialog` | mesmos parâmetros | `{files,points,...}` ou `{cancelled:true}` |
+| `doc.exportSim` | `{path,step?,tolerance?}` | `{files,schema,points,total_length_mm,step_mm,closed,ordered,rev}` |
+| `doc.exportSimDialog` | mesmos parâmetros | `{files,points,...}` ou `{cancelled:true}` |
 | `doc.addLine` | `{a,b,width?,layer?}` | `{id,rev}` |
 | `doc.addCubic` | `{p0,p1,p2,p3,width?,layer?}` | `{id,rev}` |
 | `doc.addArc` | `{center,radius,start?,sweep?,width?,layer?}` | `{id,rev}` |
@@ -174,8 +181,8 @@ A janela é dividida em quatro áreas:
     novo).
   - **Documento** — novo, abrir, salvar, salvar como, presets de arena
     (4 × 3 m e 3 × 4 m) e exportação (**Exportar SVG**, **Mosaico A4**,
-    **PDF 1:1**, **3D Blender**, **Robô** e **Tabela**). Cada exportação abre
-    um diálogo de opções antes de pedir o arquivo.
+    **PDF 1:1**, **3D Blender**, **Robô**, **Tabela** e **Simulador**). Cada
+    exportação abre um diálogo de opções antes de pedir o arquivo.
   - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias,
     além de **Visão do Robô** e **Validar Pista**.
 - **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
@@ -233,6 +240,7 @@ sessão:
 | **3D Blender** | piso, linha central, escala, espessura da faixa e passo da malha |
 | **Robô** | passo dos pontos, largura do pincel (0 = da pista) e velocidade base |
 | **Tabela** | passo da matriz |
+| **Simulador** | passo da linha central e tolerância das curvas |
 
 **Configurar arena** (painel direito) permite alterar nome, largura, altura e
 margem em milímetros. Valores inválidos (dimensões não positivas ou margem maior
@@ -292,6 +300,12 @@ largura do pincel pode substituir a largura dos elementos.
 com passo padrão de 50 mm. A mesma matriz está disponível na API por
 `scene.pathTable` (JSON, com colunas, pontos, trechos e metadados) e o painel
 **Análise da pista** mostra a contagem de pontos e o passo usados.
+
+**Documento → Simulador** grava `pista.pfsim.json` (schema 1), um documento
+autossuficiente para o simulador: arena, linha central amostrada na ordem de
+percurso, trechos por elemento, métricas (comprimento, dificuldade, velocidade
+recomendada) e pontos críticos. As convenções de coordenadas e o dicionário de
+campos estão em [`docs/formato-pfsim.md`](docs/formato-pfsim.md).
 
 ### Edição contextual, análise e validação
 
@@ -400,7 +414,7 @@ Autoteste do núcleo e da ponte, sem abrir janela:
 src/core/geometry/   Vec2, BBox, CubicBezier, LineSegment, ArcSegment, SpatialIndex
 src/core/scene/      Arena, Element, ModuleInstance, Scene, validação
 src/core/analysis/   Métricas, dificuldade e pontos críticos do traçado
-src/core/sim/        Matriz de coordenadas (linha central amostrada) e CSV
+src/core/sim/        Matriz de coordenadas (linha central amostrada), CSV e `.pfsim.json`
 src/core/io/         `.pftrack` (JSON schema 1), SVG, PDF 1:1, OBJ/MTL e robô
 src/app/bridge/      Dispatcher JSON + métodos da API
 src/app/shell/       IShell/WebUiShell (FastWebUI)
@@ -427,7 +441,8 @@ docs/                ADRs e formato de arquivo
 - Windows-only na v1; MSVC.
 - Uma arena com um traçado principal.
 - Cruzamentos sempre "segue reto" (`w↔e`, `s↔n`).
-- Simulador vem depois; o formato `.pfsim.json` é versionado e documentado.
+- O simulador consome `.pfsim.json` (schema 1), versionado e documentado em
+  `docs/formato-pfsim.md`.
 - Todo o domínio em C++; o frontend só desenha e captura entrada.
 
 ## Licença
