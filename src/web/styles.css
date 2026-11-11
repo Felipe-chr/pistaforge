@@ -215,6 +215,55 @@ body {
     border-color: var(--line-strong);
 }
 
+.dialog-message {
+    margin: 0 0 4px;
+    color: var(--muted);
+    line-height: 1.5;
+}
+
+.dialog-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    align-items: center;
+    gap: 8px 12px;
+    margin: 2px 0 0;
+}
+
+.dialog-grid label {
+    margin: 0;
+}
+
+.dialog-grid input[type="number"] {
+    text-align: right;
+}
+
+.path-dialog .dialog-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    grid-column: 1 / -1;
+    margin: 2px 0;
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.path-dialog .dialog-check input {
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    accent-color: var(--accent);
+}
+
+.dialog-error {
+    margin: 10px 0 0;
+    color: #b91c1c;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 /* ------------------------------------------------------------------ ribbon */
 
 .ribbon {
@@ -525,6 +574,10 @@ body {
     margin: 0;
     text-align: right;
     font-weight: 600;
+}
+
+.facts dd.dirty {
+    color: var(--warn);
 }
 
 .mono {

@@ -469,6 +469,8 @@
         <section class="panel">
             <h2>Documento</h2>
             <dl class="facts">
+                <div><dt>Arquivo</dt><dd id="doc-file" class="mono">sem título</dd></div>
+                <div><dt>Alterações</dt><dd id="doc-dirty">salvo</dd></div>
                 <div><dt>Elementos</dt><dd id="doc-elements">0</dd></div>
                 <div><dt>Conexões</dt><dd id="doc-connections">0</dd></div>
                 <div><dt>Revisão</dt><dd id="doc-revision">0</dd></div>
@@ -521,6 +523,7 @@
                 <div><dt>Margem</dt><dd id="arena-margin">—</dd></div>
                 <div><dt>Escala</dt><dd>1:1</dd></div>
             </dl>
+            <button class="btn wide" data-action="arena-custom">Configurar arena</button>
         </section>
 
         <section class="panel">
@@ -553,6 +556,53 @@
             <input id="path-input" type="text" spellcheck="false" autocomplete="off">
             <div class="dialog-actions">
                 <button value="ok" class="btn primary">OK</button>
+                <button value="cancel" class="btn ghost">Cancelar</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="confirm-dialog" class="path-dialog">
+        <form method="dialog">
+            <h2 id="confirm-dialog-title">Alterações não salvas</h2>
+            <p class="dialog-message" id="confirm-dialog-message">
+                O documento atual tem alterações que ainda não foram salvas.
+            </p>
+            <div class="dialog-actions">
+                <button value="save" class="btn primary">Salvar</button>
+                <button value="cancel" class="btn ghost">Cancelar</button>
+                <button value="discard" class="btn ghost">Descartar</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="arena-dialog" class="path-dialog">
+        <form method="dialog">
+            <h2>Configurar arena</h2>
+            <div class="dialog-grid">
+                <label for="arena-name">Nome</label>
+                <input id="arena-name" type="text" maxlength="80" spellcheck="false" autocomplete="off">
+                <label for="arena-width">Largura (mm)</label>
+                <input id="arena-width" type="number" min="100" step="10">
+                <label for="arena-height">Altura (mm)</label>
+                <input id="arena-height" type="number" min="100" step="10">
+                <label for="arena-margin">Margem (mm)</label>
+                <input id="arena-margin" type="number" min="0" step="10">
+            </div>
+            <p class="dialog-error" id="arena-error" hidden></p>
+            <div class="dialog-actions">
+                <button value="ok" class="btn primary" id="arena-apply">Aplicar</button>
+                <button value="cancel" class="btn ghost">Cancelar</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="export-dialog" class="path-dialog">
+        <form method="dialog">
+            <h2 id="export-dialog-title">Exportar</h2>
+            <div class="dialog-grid" id="export-fields"></div>
+            <p class="dialog-error" id="export-error" hidden></p>
+            <div class="dialog-actions">
+                <button value="ok" class="btn primary" id="export-confirm">Exportar…</button>
                 <button value="cancel" class="btn ghost">Cancelar</button>
             </div>
         </form>

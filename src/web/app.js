@@ -21,6 +21,9 @@ const state = {
     ribbon: { elementId: null, kind: null, info: null, token: 0 },
     propertiesClipboard: null,
     validation: null,
+    savedSignature: null,
+    dirty: false,
+    exportOptions: {},
 };
 
 const el = (id) => document.getElementById(id);
@@ -101,37 +104,126 @@ function isTypingTarget(target) {
     );
 }
 
-function askPath(message, fallback) {
+async function askPath(message, fallback) {
     const dialog = el("path-dialog");
     if (!dialog || typeof dialog.showModal !== "function") {
         try {
-            return Promise.resolve(window.prompt(message, fallback));
+            return window.prompt(message, fallback);
         } catch {
             setStatus("Este navegador não permite escolher o caminho do arquivo.");
-            return Promise.resolve(null);
+            return null;
         }
     }
 
     el("path-dialog-title").textContent = message;
     const input = el("path-input");
     input.value = fallback;
-    dialog.returnValue = "";
 
-    return new Promise((resolve) => {
-        const onClose = () => {
-            dialog.removeEventListener("close", onClose);
-            const value = input.value.trim();
-            resolve(dialog.returnValue === "ok" && value ? value : null);
-        };
-        dialog.addEventListener("close", onClose);
-        dialog.showModal();
+    const result = await askDialog("path-dialog", () => {
         input.focus();
         input.select();
     });
+    const value = input.value.trim();
+    return result === "ok" && value ? value : null;
 }
 
 function docArena() {
     return state.doc?.arena ?? state.info?.arena ?? { width: 4000, height: 3000, margin: 100 };
+}
+
+/* ------------------------------------------- estado de salvamento e diálogos */
+
+/// Assinatura estável do conteúdo editável (ignora revisão, caminho e ids livres).
+function docSignature(doc) {
+    if (!doc) return null;
+    return JSON.stringify({
+        arena: doc.arena,
+        elements: doc.elements,
+        connections: doc.connections,
+        markers: doc.markers,
+        guides: doc.guides,
+        layers: doc.layers,
+    });
+}
+
+function updateDirtyState() {
+    const signature = docSignature(state.doc);
+    state.dirty = Boolean(signature) && signature !== state.savedSignature;
+}
+
+function markSaved() {
+    state.savedSignature = docSignature(state.doc);
+    state.dirty = false;
+    updateFacts();
+}
+
+/// Abre um `<dialog>` de formulário e resolve com o `returnValue` ("ok", "cancel", …).
+///
+/// O evento `close` não é confiável em todos os WebViews, então a resolução
+/// acontece no clique de um botão com `value`; `cancel` (Esc) e `close` ficam
+/// como fallback. Cliques cancelados por validação (`preventDefault`) mantêm o
+/// diálogo aberto.
+function askDialog(id, onOpen) {
+    const dialog = el(id);
+    if (!dialog || typeof dialog.showModal !== "function") return Promise.resolve(null);
+
+    dialog.returnValue = "";
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (value) => {
+            if (settled) return;
+            settled = true;
+            dialog.removeEventListener("click", onClick);
+            dialog.removeEventListener("cancel", onCancel);
+            dialog.removeEventListener("close", onClose);
+            if (dialog.open) dialog.close();
+            resolve(value || "cancel");
+        };
+        const onClick = (event) => {
+            if (event.defaultPrevented) return;
+            const button = event.target.closest("button[value]");
+            if (!button || !dialog.contains(button)) return;
+            event.preventDefault();
+            finish(button.value);
+        };
+        const onCancel = () => finish("cancel");
+        const onClose = () => finish(dialog.returnValue);
+
+        dialog.addEventListener("click", onClick);
+        dialog.addEventListener("cancel", onCancel);
+        dialog.addEventListener("close", onClose);
+        dialog.showModal();
+        if (typeof onOpen === "function") onOpen(dialog);
+    });
+}
+
+async function askUnsaved() {
+    const dialog = el("confirm-dialog");
+    if (!dialog || typeof dialog.showModal !== "function") {
+        return window.confirm("Há alterações não salvas. Descartar?")
+            ? "discard"
+            : "cancel";
+    }
+    return (await askDialog("confirm-dialog")) ?? "cancel";
+}
+
+/// Devolve `true` quando é seguro descartar o documento atual.
+async function confirmDiscard() {
+    if (!state.dirty) return true;
+
+    const choice = await askUnsaved();
+    if (choice === "cancel") {
+        setStatus("Operação cancelada · alterações mantidas.");
+        return false;
+    }
+    if (choice === "save") {
+        await saveDocument();
+        if (state.dirty) {
+            setStatus("Salvamento cancelado · alterações mantidas.");
+            return false;
+        }
+    }
+    return true;
 }
 
 function layerState() {
@@ -147,6 +239,14 @@ function updateFacts() {
     el("doc-revision").textContent = String(doc?.revision ?? 0);
     el("doc-cursor").textContent =
         `${Math.round(state.cursor.x)}, ${Math.round(state.cursor.y)}`;
+
+    const path = doc?.path ?? null;
+    const fileNode = el("doc-file");
+    fileNode.textContent = path ? path.split(/[\\/]/).pop() : "sem título";
+    fileNode.title = path ?? "Documento ainda não salvo";
+    const dirtyNode = el("doc-dirty");
+    dirtyNode.textContent = state.dirty ? "não salvo" : "salvo";
+    dirtyNode.className = state.dirty ? "dirty" : "";
     el("zoom-status").textContent = `${Math.round(state.zoom * 100)}%`;
 
     el("arena-dims").textContent = `${formatMm(arena.width)} × ${formatMm(arena.height)}`;
@@ -171,6 +271,7 @@ async function refreshDoc() {
     if (token !== refreshToken) return state.doc;
 
     state.doc = doc;
+    updateDirtyState();
     if (
         state.selection != null &&
         !(doc.elements ?? []).some((element) => element.id === state.selection)
@@ -2047,6 +2148,8 @@ async function deleteSelection() {
 }
 
 async function newDocument() {
+    if (!(await confirmDiscard())) return;
+
     await rpc("doc.new");
     state.selection = null;
     state.cursor = { x: 300, y: 300 };
@@ -2056,6 +2159,7 @@ async function newDocument() {
     resetView();
     setTool("select");
     await refreshDoc();
+    markSaved();
     setStatus("Documento novo · arena 4 × 3 m.");
 }
 
@@ -2081,6 +2185,7 @@ async function saveDocument() {
     if (path) {
         const result = await rpc("doc.save", { path });
         await refreshDoc();
+        markSaved();
         setStatus(`Salvo em ${result.path}`);
         return;
     }
@@ -2096,7 +2201,157 @@ async function saveDocumentAs() {
 
     const result = await rpc("doc.save", { path });
     await refreshDoc();
+    markSaved();
     setStatus(`Salvo em ${result.path}`);
+}
+
+/* ------------------------------------------------- opções de exportação (UI) */
+
+const EXPORT_FIELDS = {
+    pdf: {
+        title: "Exportar PDF 1:1",
+        fields: [
+            { key: "a4", label: "Dividir em páginas A4 (190 × 277 mm)", kind: "bool", default: true },
+            { key: "marks", label: "Pontos numerados para desenhar no chão", kind: "bool", default: true },
+            { key: "centerline", label: "Somente a linha central", kind: "bool", default: false },
+            { key: "grid", label: "Grade de referência", kind: "bool", default: true },
+            { key: "calibration", label: "Régua de calibração", kind: "bool", default: true },
+            { key: "mark_step", label: "Passo das marcas (mm)", kind: "number", default: 500, min: 10, step: 10 },
+            { key: "path_width", label: "Largura da linha central (mm)", kind: "number", default: 1, min: 0.1, step: 0.1 },
+            { key: "overlap", label: "Sobreposição das páginas (mm)", kind: "number", default: 10, min: 0, step: 1 },
+        ],
+    },
+    obj: {
+        title: "Exportar 3D para Blender",
+        fields: [
+            { key: "floor", label: "Incluir piso da arena", kind: "bool", default: true },
+            { key: "centerline", label: "Incluir linha central", kind: "bool", default: true },
+            { key: "scale", label: "Escala (mm → m)", kind: "number", default: 0.001, min: 0.0001, step: 0.001 },
+            { key: "height", label: "Espessura da faixa (mm)", kind: "number", default: 2, min: 0.1, step: 0.5 },
+            { key: "step", label: "Passo da malha (mm)", kind: "number", default: 20, min: 5, step: 5 },
+        ],
+    },
+    robot: {
+        title: "Exportar pontos do robô",
+        fields: [
+            { key: "step", label: "Passo dos pontos (mm)", kind: "number", default: 100, min: 10, step: 10 },
+            { key: "brush", label: "Largura do pincel (mm, 0 = da pista)", kind: "number", default: 0, min: 0, step: 1 },
+            { key: "speed", label: "Velocidade base (mm/s)", kind: "number", default: 250, min: 10, step: 10 },
+        ],
+    },
+    table: {
+        title: "Exportar matriz de coordenadas",
+        fields: [
+            { key: "step", label: "Passo da matriz (mm)", kind: "number", default: 50, min: 5, step: 5 },
+        ],
+    },
+};
+
+function defaultExportOptions(kind) {
+    const spec = EXPORT_FIELDS[kind];
+    const stored = state.exportOptions[kind] ?? {};
+    const options = {};
+    for (const field of spec.fields) {
+        options[field.key] = stored[field.key] ?? field.default;
+    }
+    return options;
+}
+
+/// Monta o formulário do diálogo de exportação e devolve as opções escolhidas.
+async function askExportOptions(kind) {
+    const spec = EXPORT_FIELDS[kind];
+    if (!spec) return null;
+
+    const dialog = el("export-dialog");
+    if (!dialog || typeof dialog.showModal !== "function") {
+        return defaultExportOptions(kind);
+    }
+
+    const stored = state.exportOptions[kind] ?? {};
+    const container = el("export-fields");
+    const error = el("export-error");
+    container.innerHTML = "";
+    error.hidden = true;
+    el("export-dialog-title").textContent = spec.title;
+
+    for (const field of spec.fields) {
+        const id = `export-${kind}-${field.key}`;
+        const value = stored[field.key] ?? field.default;
+
+        if (field.kind === "bool") {
+            const row = document.createElement("label");
+            row.className = "dialog-check";
+            row.htmlFor = id;
+
+            const input = document.createElement("input");
+            input.type = "checkbox";
+            input.id = id;
+            input.dataset.key = field.key;
+            input.checked = Boolean(value);
+
+            const text = document.createElement("span");
+            text.textContent = field.label;
+
+            row.append(input, text);
+            container.append(row);
+            continue;
+        }
+
+        const label = document.createElement("label");
+        label.htmlFor = id;
+        label.textContent = field.label;
+
+        const input = document.createElement("input");
+        input.type = "number";
+        input.id = id;
+        input.dataset.key = field.key;
+        input.min = String(field.min ?? 0);
+        input.step = String(field.step ?? 1);
+        input.value = String(value);
+
+        container.append(label, input);
+    }
+
+    const collect = () => {
+        const options = {};
+        for (const field of spec.fields) {
+            const input = container.querySelector(`[data-key="${field.key}"]`);
+            if (!input) continue;
+            if (field.kind === "bool") {
+                options[field.key] = input.checked;
+                continue;
+            }
+            const number = Number(input.value);
+            if (!Number.isFinite(number) || number < (field.min ?? 0)) {
+                error.textContent = `Valor inválido em "${field.label}".`;
+                error.hidden = false;
+                input.focus();
+                return null;
+            }
+            options[field.key] = number;
+        }
+        error.hidden = true;
+        return options;
+    };
+
+    const confirm = el("export-confirm");
+    const onConfirm = (event) => {
+        if (!collect()) event.preventDefault();
+    };
+    confirm.addEventListener("click", onConfirm);
+    try {
+        const result = await askDialog("export-dialog", () => {
+            container.querySelector("input")?.focus();
+        });
+        if (result !== "ok") return null;
+
+        const options = collect();
+        if (!options) return null;
+        state.exportOptions[kind] = options;
+        return options;
+    } finally {
+        confirm.removeEventListener("click", onConfirm);
+    }
 }
 
 async function exportSvg(tiled) {
@@ -2154,50 +2409,89 @@ async function runExport({ dialog, direct, title, fallback, params = {}, describ
 }
 
 async function exportPdf() {
+    const options = await askExportOptions("pdf");
+    if (!options) {
+        setStatus("Exportação cancelada.");
+        return;
+    }
+
+    const arena = docArena();
     return runExport({
         dialog: "doc.exportPdfDialog",
         direct: "doc.exportPdf",
         title: "Exportar PDF 1:1:",
         fallback: "C:/Temp/pista.pdf",
+        params: {
+            tiled: options.a4,
+            page_width: options.a4 ? 190 : arena.width,
+            page_height: options.a4 ? 277 : arena.height,
+            overlap: options.overlap,
+            marks: options.marks,
+            centerline: options.centerline,
+            grid: options.grid,
+            calibration: options.calibration,
+            mark_step: options.mark_step,
+            path_width: options.path_width,
+        },
         describe: (result) =>
             `PDF 1:1: ${result.pages} página(s) · ${result.files[0] ?? ""}`,
     });
 }
 
 async function exportObj() {
+    const options = await askExportOptions("obj");
+    if (!options) {
+        setStatus("Exportação cancelada.");
+        return;
+    }
     return runExport({
         dialog: "doc.exportObjDialog",
         direct: "doc.exportObj",
         title: "Exportar pista 3D (Blender):",
         fallback: "C:/Temp/pista.obj",
+        params: options,
         describe: (result) =>
             `3D exportado: ${result.vertices} vértices, ${result.faces} faces · ${result.files[0] ?? ""}`,
     });
 }
 
 async function exportRobot() {
+    const options = await askExportOptions("robot");
+    if (!options) {
+        setStatus("Exportação cancelada.");
+        return;
+    }
     return runExport({
         dialog: "doc.exportRobotDialog",
         direct: "doc.exportRobot",
         title: "Exportar pontos do robô (arquivo base):",
         fallback: "C:/Temp/pista-pontos.csv",
+        params: options,
         describe: (result) =>
             `Robô: ${result.points} pontos · ${result.files[0] ?? ""}`,
     });
 }
 
 async function exportTable() {
+    const options = await askExportOptions("table");
+    if (!options) {
+        setStatus("Exportação cancelada.");
+        return;
+    }
     return runExport({
         dialog: "doc.exportTableDialog",
         direct: "doc.exportTable",
         title: "Exportar tabela de coordenadas:",
         fallback: "C:/Temp/pista-tabela.csv",
+        params: options,
         describe: (result) =>
             `Matriz: ${result.points} pontos · ${result.files[0] ?? ""}`,
     });
 }
 
 async function openDocument() {
+    if (!(await confirmDiscard())) return;
+
     const path = await chooseFilePath(false);
     if (!path) {
         setStatus("Abertura cancelada.");
@@ -2213,16 +2507,70 @@ async function openDocument() {
     resetView();
     setTool("select");
     await refreshDoc();
+    markSaved();
     setStatus(`Aberto: ${path}`);
 }
 
-async function setArena(width, height) {
-    await rpc("doc.setArena", { width, height, margin: 100 });
+async function applyArena(arena) {
+    await rpc("doc.setArena", arena);
     state.selection = null;
     state.cursor = { x: 300, y: 300 };
     resetView();
     await refreshDoc();
-    setStatus(`Arena ${formatMm(width)} × ${formatMm(height)}.`);
+
+    const current = docArena();
+    setStatus(
+        `Arena ${formatMm(current.width)} × ${formatMm(current.height)} · margem ${formatMm(current.margin)}.`
+    );
+}
+
+function readArenaForm() {
+    return {
+        name: el("arena-name").value.trim() || "Arena",
+        width: Number(el("arena-width").value),
+        height: Number(el("arena-height").value),
+        margin: Number(el("arena-margin").value),
+    };
+}
+
+function validateArena(arena) {
+    if (!(arena.width > 0) || !(arena.height > 0)) {
+        return "Largura e altura devem ser positivas.";
+    }
+    if (!(arena.margin >= 0)) {
+        return "A margem não pode ser negativa.";
+    }
+    if (arena.margin * 2 >= Math.min(arena.width, arena.height)) {
+        return "A margem é grande demais para esta arena.";
+    }
+    return null;
+}
+
+async function openArenaDialog() {
+    const arena = docArena();
+    el("arena-name").value = arena.name ?? "Arena";
+    el("arena-width").value = String(Math.round(arena.width ?? 4000));
+    el("arena-height").value = String(Math.round(arena.height ?? 3000));
+    el("arena-margin").value = String(Math.round(arena.margin ?? 100));
+    el("arena-error").hidden = true;
+
+    const result = await askDialog("arena-dialog", () => {
+        const input = el("arena-width");
+        input.focus();
+        input.select();
+    });
+    if (result !== "ok") {
+        setStatus("Configuração de arena cancelada.");
+        return;
+    }
+
+    const values = readArenaForm();
+    const error = validateArena(values);
+    if (error) {
+        setStatus(error);
+        return;
+    }
+    await applyArena(values);
 }
 
 async function setLayer(key, visible) {
@@ -2230,6 +2578,7 @@ async function setLayer(key, visible) {
     const result = await rpc("doc.setLayers", { [key]: visible });
     state.doc.layers = result.layers;
     syncLayerToggles();
+    updateDirtyState();
     updateFacts();
     draw();
 
@@ -2767,9 +3116,11 @@ async function runAction(action) {
         case "export-table":
             return exportTable();
         case "arena-default":
-            return setArena(4000, 3000);
+            return applyArena({ width: 4000, height: 3000, margin: 100 });
         case "arena-3x4":
-            return setArena(3000, 4000);
+            return applyArena({ width: 3000, height: 4000, margin: 100 });
+        case "arena-custom":
+            return openArenaDialog();
         case "zoom-in":
             return zoomBy(1.25);
         case "zoom-out":
@@ -2846,6 +3197,16 @@ async function init() {
         setLayer(input.dataset.layer, input.checked).catch((error) => {
             setStatus(String(error.message ?? error));
         });
+    });
+
+    el("arena-apply").addEventListener("click", (event) => {
+        const error = validateArena(readArenaForm());
+        if (!error) return;
+
+        event.preventDefault();
+        const node = el("arena-error");
+        node.textContent = error;
+        node.hidden = false;
     });
 
     const canvas = el("canvas");
@@ -2953,6 +3314,7 @@ async function init() {
         el("latency").disabled = false;
 
         await refreshDoc();
+        markSaved();
         setTool("select");
         syncLayerToggles();
         setStatus(`Pronto · ${info.name} ${info.version} · ${info.compiler}`);
@@ -2966,5 +3328,11 @@ async function init() {
 const observer = new ResizeObserver(() => draw());
 observer.observe(el("canvas").parentElement);
 window.addEventListener("resize", draw);
+
+window.addEventListener("beforeunload", (event) => {
+    if (!state.dirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+});
 
 init();

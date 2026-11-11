@@ -10,7 +10,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 - **Produção:** malha 3D para Blender, pontos/instruções para robô e matriz de
   coordenadas para o simulador
 
-## Estado atual — M1 + M2 + edição + análise
+## Estado atual — edição, análise, produção e proteção de dados
 
 - [x] Repositório, CMake, presets MSVC
 - [x] FastWebUI vendorizado e linkado como biblioteca estática
@@ -82,6 +82,16 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
         rumo, curvatura, largura e elemento — base do simulador
   - [x] `scene.pathTable` devolve a matriz como JSON e `scene.analysis` inclui
         contagem de pontos e passo
+- [x] Proteção de dados e ajustes de interface (M7)
+  - [x] Indicador **Arquivo** / **Alterações** no painel do documento
+        (`salvo` / `não salvo`) baseado na assinatura do conteúdo — desfazer até
+        o estado salvo volta a marcar como limpo
+  - [x] Aviso de **alterações não salvas** ao criar/abrir documento, com
+        **Salvar**, **Cancelar** e **Descartar**, além do aviso ao fechar a aba
+  - [x] Diálogo de **opções de exportação** para PDF, 3D, robô e tabela, com
+        validação de valores e preferências lembradas durante a sessão
+  - [x] **Configurar arena** no painel: nome, largura, altura e margem, com
+        validação (dimensões positivas e margem compatível)
 
 ### API de documento e cena
 
@@ -131,7 +141,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.addMarker` | `{type,x,y,angle?,text?}` | `{id,rev}` |
 | `doc.setStartFinish` | `{kind?:start\|finish\|start_finish,x,y,angle?}` | `{id,type,x,y,angle,rev}` |
 | `doc.clearStartFinish` | `{kind?}` | `{removed,rev}` |
-| `doc.setArena` | `{name?,width?,height?,margin?}` | `{rev,arena}` |
+| `doc.setArena` | `{name?,width?,height?,margin?,show_dimensions?}` | `{rev,arena}` |
 | `doc.setLayers` | `{track?,markers?,annotations?,guides?}` | `{layers,rev}` |
 | `scene.ports` | `{}` | lista de portas |
 | `scene.pick` | `{point,tolerance?}` | `{element,port,t,distance,point}` |
@@ -164,13 +174,15 @@ A janela é dividida em quatro áreas:
     novo).
   - **Documento** — novo, abrir, salvar, salvar como, presets de arena
     (4 × 3 m e 3 × 4 m) e exportação (**Exportar SVG**, **Mosaico A4**,
-    **PDF 1:1**, **3D Blender**, **Robô** e **Tabela**).
+    **PDF 1:1**, **3D Blender**, **Robô** e **Tabela**). Cada exportação abre
+    um diálogo de opções antes de pedir o arquivo.
   - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias,
     além de **Visão do Robô** e **Validar Pista**.
 - **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
 - **Prancheta** ao centro, com grade, margem de segurança, cotas e cursor.
-- **Painel** à direita, com versão, compilador, contadores do documento,
-  seleção atual, arena, estado da ponte e **Análise da pista**.
+- **Painel** à direita, com arquivo atual, estado de alterações, versão,
+  compilador, contadores do documento, seleção atual, arena (com **Configurar
+  arena**), estado da ponte e **Análise da pista**.
 
 As formas da faixa **Inserir** (e da biblioteca) entram em **modo de
 posicionamento**: o primeiro clique na arena ancora a forma, o movimento do
@@ -202,6 +214,29 @@ O arrasto contínuo gera uma única entrada de desfazer (mesma chave `merge`).
 Abrir e salvar usam os diálogos nativos do Windows (`GetOpenFileNameW` /
 `GetSaveFileNameW`), começando na última pasta usada. Se o diálogo nativo não
 estiver disponível, a interface cai no `<dialog>` da página.
+
+### Alterações não salvas, opções de exportação e arena
+
+O painel **Documento** mostra o nome do arquivo e se há **alterações não
+salvas**. A marcação compara o conteúdo editável (arena, elementos, conexões,
+marcadores, guias e camadas) com o último estado salvo, então desfazer até o
+ponto salvo volta a indicar `salvo`. Criar um documento novo ou abrir outro com
+alterações pendentes mostra **Salvar**, **Cancelar** e **Descartar**; fechar a
+aba também pede confirmação.
+
+Cada botão de exportação abre primeiro um diálogo de opções, lembrado durante a
+sessão:
+
+| Exportação | Opções |
+|------------|--------|
+| **PDF 1:1** | páginas A4 (ou página única do tamanho da arena), pontos no chão, somente linha central, grade, calibração, passo das marcas, largura da linha e sobreposição |
+| **3D Blender** | piso, linha central, escala, espessura da faixa e passo da malha |
+| **Robô** | passo dos pontos, largura do pincel (0 = da pista) e velocidade base |
+| **Tabela** | passo da matriz |
+
+**Configurar arena** (painel direito) permite alterar nome, largura, altura e
+margem em milímetros. Valores inválidos (dimensões não positivas ou margem maior
+que metade da arena) mantêm o diálogo aberto com a mensagem de erro.
 
 ### Exportação e impressão (SVG)
 
@@ -394,3 +429,7 @@ docs/                ADRs e formato de arquivo
 - Cruzamentos sempre "segue reto" (`w↔e`, `s↔n`).
 - Simulador vem depois; o formato `.pfsim.json` é versionado e documentado.
 - Todo o domínio em C++; o frontend só desenha e captura entrada.
+
+## Licença
+
+Distribuído sob a licença **MIT**. Veja [LICENSE](LICENSE).
