@@ -303,6 +303,15 @@ body {
     gap: 2px;
 }
 
+.ribbon-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, auto));
+    grid-auto-rows: min-content;
+    align-items: center;
+    justify-content: start;
+    gap: 1px 2px;
+}
+
 .ribbon-items-column {
     flex-direction: column;
     align-items: flex-start;

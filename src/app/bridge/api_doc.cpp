@@ -18,11 +18,15 @@
 #include "app/bridge/error.hpp"
 #include "app/bridge/state.hpp"
 #include "core/analysis/track_analysis.hpp"
+#include "core/io/robot_path.hpp"
 #include "core/io/scene_json.hpp"
+#include "core/io/scene_obj.hpp"
+#include "core/io/scene_pdf.hpp"
 #include "core/io/scene_svg.hpp"
 #include "core/scene/element_ops.hpp"
 #include "core/scene/snap.hpp"
 #include "core/scene/validation.hpp"
+#include "core/sim/path_table.hpp"
 
 namespace pf {
 namespace {
@@ -367,6 +371,218 @@ Json export_svg(AppState& state, const Json& params) {
     };
 }
 
+/// Matriz de coordenadas como JSON (colunas + linhas + metadados).
+Json path_table_json(const PathTable& table) {
+    Json points = Json::array();
+    for (const PathSample& sample : table.samples) {
+        points.push_back(Json::array({sample.s_mm, sample.position.x, sample.position.y,
+                                      sample.heading_deg, sample.curvature, sample.width_mm,
+                                      sample.element}));
+    }
+
+    Json segments = Json::array();
+    for (const PathSegmentInfo& segment : table.segments) {
+        segments.push_back(Json{
+            {"element", segment.element},
+            {"start_s_mm", segment.start_s_mm},
+            {"length_mm", segment.length_mm},
+            {"reversed", segment.reversed},
+        });
+    }
+
+    return Json{
+        {"columns", path_table_columns()},
+        {"points", std::move(points)},
+        {"segments", std::move(segments)},
+        {"total_length_mm", table.total_length_mm},
+        {"point_count", table.samples.size()},
+        {"step_mm", table.step_mm},
+        {"closed", table.closed},
+        {"ordered", table.ordered},
+        {"start_element", table.start_element},
+    };
+}
+
+/// Exporta a cena para PDF 1:1, em página única ou mosaico.
+Json export_pdf(AppState& state, const Json& params) {
+    require_object(params);
+    const std::filesystem::path path{string_param(params, "path")};
+
+    io::PdfOptions options;
+    options.tiled = bool_or(params, "tiled", false);
+    options.page_width_mm = number_or(params, "page_width", options.page_width_mm);
+    options.page_height_mm = number_or(params, "page_height", options.page_height_mm);
+    options.overlap_mm = number_or(params, "overlap", options.overlap_mm);
+    options.margin_mm = number_or(params, "margin", options.margin_mm);
+    options.grid = bool_or(params, "grid", options.grid);
+    options.calibration = bool_or(params, "calibration", options.calibration);
+    options.guides = bool_or(params, "guides", options.guides);
+    options.centerline = bool_or(params, "centerline", options.centerline);
+    options.floor_marks = bool_or(params, "marks", options.floor_marks);
+    options.mark_step_mm = number_or(params, "mark_step", options.mark_step_mm);
+    options.path_width_mm = number_or(params, "path_width", options.path_width_mm);
+
+    if (!(options.page_width_mm > 0.0) || !(options.page_height_mm > 0.0)) {
+        fail("invalid_params", "As dimensões da página devem ser positivas.");
+    }
+    if (options.overlap_mm < 0.0) {
+        fail("invalid_params", "A sobreposição não pode ser negativa.");
+    }
+    if (options.margin_mm < 0.0) {
+        fail("invalid_params", "A margem não pode ser negativa.");
+    }
+    if (!(options.mark_step_mm > 0.0)) {
+        fail("invalid_params", "O passo das marcas deve ser positivo.");
+    }
+    if (!(options.path_width_mm > 0.0)) {
+        fail("invalid_params", "A largura da linha central deve ser positiva.");
+    }
+
+    if (path.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(path.parent_path(), error);
+    }
+
+    const std::string pdf = io::to_pdf(state.scene, options);
+    write_text_file(path, pdf);
+
+    int pages = 0;
+    std::size_t cursor = 0;
+    while ((cursor = pdf.find("/Type /Page ", cursor)) != std::string::npos) {
+        ++pages;
+        cursor += 12;
+    }
+
+    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    return Json{
+        {"files", Json::array({path.string()})},
+        {"pages", pages},
+        {"tiled", options.tiled},
+        {"marks", options.floor_marks},
+        {"centerline", options.centerline},
+        {"width", state.scene.arena.width_mm},
+        {"height", state.scene.arena.height_mm},
+        {"rev", state.scene.revision},
+    };
+}
+
+/// Exporta a pista em 3D (OBJ + MTL) para uso no Blender.
+Json export_obj(AppState& state, const Json& params) {
+    require_object(params);
+    const std::filesystem::path path{string_param(params, "path")};
+
+    io::ObjOptions options;
+    options.scale = number_or(params, "scale", options.scale);
+    options.height_mm = number_or(params, "height", options.height_mm);
+    options.floor = bool_or(params, "floor", options.floor);
+    options.centerline = bool_or(params, "centerline", options.centerline);
+    options.step_mm = number_or(params, "step", options.step_mm);
+
+    if (!(options.scale > 0.0)) fail("invalid_params", "A escala deve ser positiva.");
+    if (!(options.height_mm > 0.0)) fail("invalid_params", "A espessura deve ser positiva.");
+    if (!(options.step_mm > 0.0)) fail("invalid_params", "O passo da malha deve ser positivo.");
+
+    std::filesystem::path mtl_path = path;
+    mtl_path.replace_extension(".mtl");
+    options.mtl_name = mtl_path.filename().string();
+
+    if (path.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(path.parent_path(), error);
+    }
+
+    const io::ObjBundle bundle = io::to_obj(state.scene, options);
+    write_text_file(path, bundle.obj);
+    write_text_file(mtl_path, bundle.mtl);
+
+    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    return Json{
+        {"files", Json::array({path.string(), mtl_path.string()})},
+        {"vertices", bundle.vertices},
+        {"faces", bundle.faces},
+        {"scale", options.scale},
+        {"height_mm", options.height_mm},
+        {"rev", state.scene.revision},
+    };
+}
+
+/// Exporta os pontos e as instruções de pintura para um robô autônomo.
+Json export_robot(AppState& state, const Json& params) {
+    require_object(params);
+    const std::filesystem::path path{string_param(params, "path")};
+
+    io::RobotPathOptions options;
+    options.step_mm = number_or(params, "step", options.step_mm);
+    options.brush_width_mm = number_or(params, "brush", options.brush_width_mm);
+    options.speed_mm_s = number_or(params, "speed", options.speed_mm_s);
+
+    if (!(options.step_mm > 0.0)) fail("invalid_params", "O passo deve ser positivo.");
+    if (options.brush_width_mm < 0.0) {
+        fail("invalid_params", "A largura do pincel não pode ser negativa.");
+    }
+    if (!(options.speed_mm_s > 0.0)) {
+        fail("invalid_params", "A velocidade deve ser positiva.");
+    }
+
+    const io::RobotPath robot = io::build_robot_path(state.scene, options);
+
+    std::filesystem::path csv_path = path;
+    std::string base = path.stem().string();
+    if (base.ends_with("-pontos")) base.resize(base.size() - 7);
+    csv_path.replace_filename(base + "-pontos.csv");
+    std::filesystem::path txt_path = path;
+    txt_path.replace_filename(base + "-instrucoes.txt");
+
+    if (path.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(path.parent_path(), error);
+    }
+
+    write_text_file(csv_path, robot.points_csv);
+    write_text_file(txt_path, robot.instructions);
+
+    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    return Json{
+        {"files", Json::array({csv_path.string(), txt_path.string()})},
+        {"points", robot.point_count},
+        {"total_length_mm", robot.total_length_mm},
+        {"step_mm", options.step_mm},
+        {"clockwise", robot.clockwise},
+        {"closed", robot.table.closed},
+        {"rev", state.scene.revision},
+    };
+}
+
+/// Exporta a matriz de coordenadas em CSV.
+Json export_table(AppState& state, const Json& params) {
+    require_object(params);
+    const std::filesystem::path path{string_param(params, "path")};
+
+    PathTableOptions options;
+    options.step_mm = number_or(params, "step", 50.0);
+    options.tolerance_mm = 0.25;
+    if (!(options.step_mm > 0.0)) fail("invalid_params", "O passo deve ser positivo.");
+
+    const PathTable table = build_path_table(state.scene, options);
+
+    if (path.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(path.parent_path(), error);
+    }
+    write_text_file(path, path_table_csv(table));
+
+    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    return Json{
+        {"files", Json::array({path.string()})},
+        {"points", table.samples.size()},
+        {"total_length_mm", table.total_length_mm},
+        {"step_mm", table.step_mm},
+        {"closed", table.closed},
+        {"ordered", table.ordered},
+        {"rev", state.scene.revision},
+    };
+}
+
 /// Elemento editável (existe e não está bloqueado) ou erro estruturado.
 Element& element_or_fail(AppState& state, ElementId id) {
     Element* element = state.scene.find_element(id);
@@ -577,6 +793,122 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         Json forwarded = params;
         forwarded["path"] = chosen->string();
         return export_svg(state, forwarded);
+    });
+
+    dispatcher.add("doc.exportPdf", [&state](const Json& params) -> Json {
+        return export_pdf(state, params);
+    });
+
+    dispatcher.add("doc.exportPdfDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = true;
+        request.title = "Exportar PDF 1:1";
+        request.initial_path = dialog_directory(state);
+        request.default_name =
+            state.path.empty() ? "pista.pdf" : state.path.stem().string() + ".pdf";
+        request.filter_label = "PDF (*.pdf)";
+        request.filter_pattern = "*.pdf";
+        request.default_extension = "pdf";
+
+        const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
+        if (!chosen) return Json{{"cancelled", true}};
+        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+
+        Json forwarded = params;
+        forwarded["path"] = chosen->string();
+        return export_pdf(state, forwarded);
+    });
+
+    dispatcher.add("doc.exportObj", [&state](const Json& params) -> Json {
+        return export_obj(state, params);
+    });
+
+    dispatcher.add("doc.exportObjDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = true;
+        request.title = "Exportar pista 3D (Blender)";
+        request.initial_path = dialog_directory(state);
+        request.default_name =
+            state.path.empty() ? "pista.obj" : state.path.stem().string() + ".obj";
+        request.filter_label = "Malha OBJ (*.obj)";
+        request.filter_pattern = "*.obj";
+        request.default_extension = "obj";
+
+        const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
+        if (!chosen) return Json{{"cancelled", true}};
+        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+
+        Json forwarded = params;
+        forwarded["path"] = chosen->string();
+        return export_obj(state, forwarded);
+    });
+
+    dispatcher.add("doc.exportRobot", [&state](const Json& params) -> Json {
+        return export_robot(state, params);
+    });
+
+    dispatcher.add("doc.exportRobotDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = true;
+        request.title = "Exportar pontos do robô";
+        request.initial_path = dialog_directory(state);
+        request.default_name = state.path.empty() ? "pista-pontos.csv"
+                                                  : state.path.stem().string() + "-pontos.csv";
+        request.filter_label = "Pontos do robô (*.csv)";
+        request.filter_pattern = "*.csv";
+        request.default_extension = "csv";
+
+        const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
+        if (!chosen) return Json{{"cancelled", true}};
+        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+
+        Json forwarded = params;
+        forwarded["path"] = chosen->string();
+        return export_robot(state, forwarded);
+    });
+
+    dispatcher.add("doc.exportTable", [&state](const Json& params) -> Json {
+        return export_table(state, params);
+    });
+
+    dispatcher.add("doc.exportTableDialog", [&state](const Json& params) -> Json {
+        require_object(params);
+        if (!state.file_dialog) {
+            fail("dialog_unavailable", "Diálogo de arquivos indisponível.");
+        }
+
+        FileDialogRequest request;
+        request.save = true;
+        request.title = "Exportar tabela de coordenadas";
+        request.initial_path = dialog_directory(state);
+        request.default_name = state.path.empty() ? "pista-tabela.csv"
+                                                  : state.path.stem().string() + "-tabela.csv";
+        request.filter_label = "Tabela de coordenadas (*.csv)";
+        request.filter_pattern = "*.csv";
+        request.default_extension = "csv";
+
+        const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
+        if (!chosen) return Json{{"cancelled", true}};
+        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+
+        Json forwarded = params;
+        forwarded["path"] = chosen->string();
+        return export_table(state, forwarded);
     });
 
     add_change(dispatcher, state, "doc.addLine", "Inserir linha", [&state](const Json& params) {
@@ -1318,9 +1650,25 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         return result;
     });
 
+    dispatcher.add("scene.pathTable", [&state](const Json& params) {
+        const double step = number_or(params, "step", 50.0);
+        if (!(step > 0.0)) {
+            fail("invalid_params", "O passo da tabela deve ser positivo.");
+        }
+        PathTableOptions options;
+        options.step_mm = step;
+        options.tolerance_mm = 0.25;
+        return path_table_json(build_path_table(state.scene, options));
+    });
+
     dispatcher.add("scene.analysis", [&state](const Json&) {
         const TrackAnalysis analysis = analyze_track(state.scene);
         const TrackMetrics& metrics = analysis.metrics;
+
+        PathTableOptions path_options;
+        path_options.step_mm = 50.0;
+        path_options.tolerance_mm = 0.25;
+        const PathTable path = build_path_table(state.scene, path_options);
 
         Json critical = Json::array();
         for (const CriticalPoint& point : analysis.critical_points) {
@@ -1355,6 +1703,13 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
             {"estimated_time_s", metrics.estimated_time_s},
             {"recommended_speed_mps", metrics.recommended_speed_mps},
             {"critical_points", std::move(critical)},
+            {"path", Json{
+                         {"point_count", path.samples.size()},
+                         {"step_mm", path.step_mm},
+                         {"total_length_mm", path.total_length_mm},
+                         {"closed", path.closed},
+                         {"ordered", path.ordered},
+                     }},
             {"rev", state.scene.revision},
         };
     });

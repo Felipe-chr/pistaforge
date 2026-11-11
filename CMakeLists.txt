@@ -30,6 +30,7 @@ add_library(pf_core STATIC
     src/core/geometry/arc.cpp
     src/core/geometry/index.cpp
     src/core/analysis/track_analysis.cpp
+    src/core/sim/path_table.cpp
     src/core/scene/module.cpp
     src/core/scene/element.cpp
     src/core/scene/element_ops.cpp
@@ -39,6 +40,9 @@ add_library(pf_core STATIC
     src/core/scene/validation.cpp
     src/core/io/scene_json.cpp
     src/core/io/scene_svg.cpp
+    src/core/io/scene_pdf.cpp
+    src/core/io/scene_obj.cpp
+    src/core/io/robot_path.cpp
 )
 target_include_directories(pf_core PUBLIC src vendor)
 target_compile_options(pf_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4>)
@@ -100,6 +104,10 @@ add_executable(pf_tests
     tests/test_snap.cpp
     tests/test_element_ops.cpp
     tests/test_track_analysis.cpp
+    tests/test_path_table.cpp
+    tests/test_scene_pdf.cpp
+    tests/test_scene_obj.cpp
+    tests/test_robot_path.cpp
     tests/test_scene_json.cpp
     tests/test_svg.cpp
     tests/test_dispatcher.cpp

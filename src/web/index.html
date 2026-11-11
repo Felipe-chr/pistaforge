@@ -286,7 +286,7 @@
                 </div>
 
                 <div class="ribbon-group">
-                    <div class="ribbon-items">
+                    <div class="ribbon-items ribbon-grid">
                         <button class="ribbon-button" data-action="export-svg" title="Exportar a arena em SVG 1:1 (mm)">
                             <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
                                 <path d="M14 6 H38 L50 18 V34 H14 Z"/>
@@ -303,8 +303,40 @@
                             </svg>
                             <span>Mosaico A4</span>
                         </button>
+                        <button class="ribbon-button" data-action="export-pdf" title="Imprimir a pista em PDF 1:1 com pontos para desenhar no chão">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M14 6 H38 L50 18 V34 H14 Z"/>
+                                <path d="M38 6 V18 H50"/>
+                                <path d="M21 25 H43 M21 29 H37" opacity="0.75"/>
+                                <circle cx="24" cy="20" r="2" fill="currentColor"/>
+                            </svg>
+                            <span>PDF 1:1</span>
+                        </button>
+                        <button class="ribbon-button" data-action="export-obj" title="Gerar malha 3D (OBJ + MTL) pronta para o Blender">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M32 7 L50 16 L50 28 L32 37 L14 28 L14 16 Z"/>
+                                <path d="M32 7 V18 M32 18 L14 27 M32 18 L50 27" opacity="0.7"/>
+                            </svg>
+                            <span>3D</span>
+                        </button>
+                        <button class="ribbon-button" data-action="export-robot" title="Lista de pontos e instruções para o robô pintar a pista">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <rect x="18" y="12" width="28" height="18" rx="4"/>
+                                <circle cx="27" cy="20" r="2.2" fill="currentColor"/>
+                                <circle cx="37" cy="20" r="2.2" fill="currentColor"/>
+                                <path d="M25 27 H39 M22 12 V7 M42 12 V7" opacity="0.7"/>
+                            </svg>
+                            <span>Robô</span>
+                        </button>
+                        <button class="ribbon-button" data-action="export-table" title="Matriz de coordenadas (CSV) usada pelo simulador">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <rect x="14" y="8" width="36" height="24" rx="1"/>
+                                <path d="M14 16 H50 M14 24 H50 M26 8 V32 M38 8 V32" opacity="0.7"/>
+                            </svg>
+                            <span>Tabela</span>
+                        </button>
                     </div>
-                    <div class="ribbon-group-title">Exportar</div>
+                    <div class="ribbon-group-title">Exportar e produzir</div>
                 </div>
             </div>
 
@@ -458,6 +490,8 @@
                 <div><dt>Especiais</dt><dd id="analysis-specials">0</dd></div>
                 <div><dt>Tempo estimado</dt><dd id="analysis-time">—</dd></div>
                 <div><dt>Velocidade média</dt><dd id="analysis-speed">—</dd></div>
+                <div><dt>Pontos da matriz</dt><dd id="analysis-points">0</dd></div>
+                <div><dt>Passo da matriz</dt><dd id="analysis-step">—</dd></div>
             </dl>
             <button class="btn wide" data-action="robot-vision" id="robot-vision-side">Visão do Robô</button>
         </section>

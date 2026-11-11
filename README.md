@@ -6,8 +6,9 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 
 - **Núcleo:** C++23 (MSVC 14.51 / Visual Studio 2026)
 - **Interface:** FastWebUI (fork de WebUI) + HTML/Canvas
-- **Impressão:** SVG 1:1 em mm, mosaico de páginas
-- **Simulação:** exportação JSON versionada (simulador virá depois)
+- **Impressão:** SVG e PDF 1:1 em mm, mosaico de páginas com pontos de marcação
+- **Produção:** malha 3D para Blender, pontos/instruções para robô e matriz de
+  coordenadas para o simulador
 
 ## Estado atual — M1 + M2 + edição + análise
 
@@ -29,7 +30,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
       **Exibir**), ícones SVG de curvas e inserção real de elementos
 - [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo nativo
       do Windows para abrir/salvar (com fallback em `<dialog>`)
-- [x] Testes com doctest e alvo `pf_tests` — 120 casos / 1742 asserções
+- [x] Testes com doctest e alvo `pf_tests` — 140 casos / 1849 asserções
 - [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
 - [x] Editor MVP com canvas interativo (M2)
@@ -70,6 +71,17 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
   - [x] **Visão do Robô**: sobreposição de curvas apertadas, viradas bruscas,
         perda de linha, trechos críticos de sensor e áreas de alta dificuldade
   - [x] **Validar Pista** com lista clicável que navega até o trecho apontado
+- [x] Produção e simulador (M6)
+  - [x] **PDF 1:1** vetorial com mosaico, calibração e pontos numerados
+        (`P1 INICIO`, `Pn`, `Pn FIM`) com coordenadas para desenhar no chão
+  - [x] **3D para Blender**: malha OBJ + MTL da faixa extrudada, piso, linha
+        central e marcadores, com escala padrão em metros e Y para cima
+  - [x] **Robô**: lista de pontos (`-pontos.csv`) e instruções de pintura
+        (`-instrucoes.txt`) com `INICIO`, `AVANCAR`, `VIRAR_DIR`, `VIRAR_ESQ`, `FIM`
+  - [x] **Matriz de coordenadas** (CSV) ordenada por conexões, com `s`, posição,
+        rumo, curvatura, largura e elemento — base do simulador
+  - [x] `scene.pathTable` devolve a matriz como JSON e `scene.analysis` inclui
+        contagem de pontos e passo
 
 ### API de documento e cena
 
@@ -83,6 +95,14 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.saveDialog` | `{}` | `{path}` ou `{cancelled:true}` |
 | `doc.exportSvg` | `{path,tiled?,page_width?,page_height?,overlap?,grid?,calibration?,guides?}` | `{files,pages,tiled,width,height,rev}` |
 | `doc.exportSvgDialog` | `{tiled?,page_width?,...}` | `{files,pages,tiled,...}` ou `{cancelled:true}` |
+| `doc.exportPdf` | `{path,tiled?,page_width?,page_height?,overlap?,margin?,grid?,calibration?,guides?,centerline?,marks?,mark_step?,path_width?}` | `{files,pages,tiled,marks,centerline,width,height,rev}` |
+| `doc.exportPdfDialog` | mesmos parâmetros | `{files,pages,...}` ou `{cancelled:true}` |
+| `doc.exportObj` | `{path,scale?,height?,floor?,centerline?,step?}` | `{files,vertices,faces,scale,height_mm,rev}` |
+| `doc.exportObjDialog` | mesmos parâmetros | `{files,vertices,faces,...}` ou `{cancelled:true}` |
+| `doc.exportRobot` | `{path,step?,brush?,speed?}` | `{files,points,total_length_mm,step_mm,clockwise,closed,rev}` |
+| `doc.exportRobotDialog` | mesmos parâmetros | `{files,points,...}` ou `{cancelled:true}` |
+| `doc.exportTable` | `{path,step?}` | `{files,points,total_length_mm,step_mm,closed,ordered,rev}` |
+| `doc.exportTableDialog` | mesmos parâmetros | `{files,points,...}` ou `{cancelled:true}` |
 | `doc.addLine` | `{a,b,width?,layer?}` | `{id,rev}` |
 | `doc.addCubic` | `{p0,p1,p2,p3,width?,layer?}` | `{id,rev}` |
 | `doc.addArc` | `{center,radius,start?,sweep?,width?,layer?}` | `{id,rev}` |
@@ -143,7 +163,8 @@ A janela é dividida em quatro áreas:
     (largada, chegada e remover marcas) e edição (desfazer, refazer, excluir,
     novo).
   - **Documento** — novo, abrir, salvar, salvar como, presets de arena
-    (4 × 3 m e 3 × 4 m) e exportação (**Exportar SVG** e **Mosaico A4**).
+    (4 × 3 m e 3 × 4 m) e exportação (**Exportar SVG**, **Mosaico A4**,
+    **PDF 1:1**, **3D Blender**, **Robô** e **Tabela**).
   - **Exibir** — visibilidade das camadas Traçado, Marcadores, Anotações e Guias,
     além de **Visão do Robô** e **Validar Pista**.
 - **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
@@ -194,6 +215,48 @@ da página e marcas de canto para alinhar a colagem. Os arquivos seguem o padrã
 `<nome>-c<coluna>-r<linha>.svg`, com índices a partir de 1. Grade de referência
 (100/500 mm), calibração e guias podem ser ligadas/desligadas pelos parâmetros de
 `doc.exportSvg`.
+
+### PDF 1:1, 3D, robô e matriz de coordenadas
+
+Toda pista gera uma **tabela de coordenadas** (linha central amostrada e
+ordenada pelas conexões). Ela é a base do simulador e de todas as saídas de
+produção:
+
+| Coluna | Significado |
+|--------|-------------|
+| `indice` | posição na sequência (1..n) |
+| `s_mm` | distância percorrida desde o início, em mm |
+| `x_mm`, `y_mm` | posição da linha central na arena |
+| `rumo_deg` | direção do percurso (0° = +X, positivo = horário na tela) |
+| `curvatura_1_mm` | curvatura assinada (1/mm) |
+| `largura_mm` | largura da faixa no ponto |
+| `elemento` | id do elemento de origem |
+
+**Documento → PDF 1:1** grava um PDF vetorial 1:1 (mm convertidos para pontos).
+Quando a arena é maior que a página, o desenho é dividido automaticamente em
+páginas A4 de 190 × 277 mm com sobreposição de 10 mm, régua de calibração,
+rótulo de página e marcas de canto. Cada página traz **pontos numerados**
+(`P1 INICIO`, `P2`, …, `Pn FIM`) com as coordenadas `x`/`y` em mm para desenhar
+a pista no chão; o passo padrão é 500 mm (`mark_step`) e pode ser alterado.
+`centerline` desenha apenas a linha central com `path_width` mm.
+
+**Documento → 3D Blender** gera `pista.obj` + `pista.mtl`: faixa extrudada com
+topo, laterais e tampas, piso da arena, linha central e caixas dos marcadores.
+A escala padrão é `0.001` (mm → m), o eixo vertical da cena vira +Y (up do
+Blender) e o plano da pista fica em XZ. Basta importar o OBJ no Blender; os
+materiais `Pista`, `Piso`, `Linha` e `Marcador` vêm no MTL.
+
+**Documento → Robô** grava dois arquivos a partir do nome escolhido:
+`<nome>-pontos.csv` (comando, posição, rumo, delta, distância, largura,
+velocidade e curvatura por ponto) e `<nome>-instrucoes.txt` (resumo, tabela de
+comandos e sequência passo a passo). Comandos: `INICIO`, `AVANCAR`,
+`VIRAR_DIR`, `VIRAR_ESQ` e `FIM`. A velocidade sugerida cai nas curvas e a
+largura do pincel pode substituir a largura dos elementos.
+
+**Documento → Tabela** grava a matriz de coordenadas em CSV (separador `;`),
+com passo padrão de 50 mm. A mesma matriz está disponível na API por
+`scene.pathTable` (JSON, com colunas, pontos, trechos e metadados) e o painel
+**Análise da pista** mostra a contagem de pontos e o passo usados.
 
 ### Edição contextual, análise e validação
 
@@ -301,7 +364,9 @@ Autoteste do núcleo e da ponte, sem abrir janela:
 ```
 src/core/geometry/   Vec2, BBox, CubicBezier, LineSegment, ArcSegment, SpatialIndex
 src/core/scene/      Arena, Element, ModuleInstance, Scene, validação
-src/core/io/         Documento `.pftrack` (JSON schema 1) e exportação SVG 1:1
+src/core/analysis/   Métricas, dificuldade e pontos críticos do traçado
+src/core/sim/        Matriz de coordenadas (linha central amostrada) e CSV
+src/core/io/         `.pftrack` (JSON schema 1), SVG, PDF 1:1, OBJ/MTL e robô
 src/app/bridge/      Dispatcher JSON + métodos da API
 src/app/shell/       IShell/WebUiShell (FastWebUI)
 src/web/             index.html, styles.css, app.js

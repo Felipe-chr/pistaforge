@@ -268,6 +268,11 @@ function renderAnalysis() {
     el("analysis-speed").textContent =
         `${(metrics.recommended_speed_mps ?? 0).toFixed(2)} m/s`;
 
+    const path = metrics.path ?? {};
+    el("analysis-points").textContent = String(path.point_count ?? 0);
+    el("analysis-step").textContent =
+        path.step_mm === undefined ? "—" : `${Number(path.step_mm).toFixed(0)} mm`;
+
     const score = Math.round(metrics.difficulty ?? 0);
     el("difficulty-score").textContent = String(score);
     el("difficulty-label").textContent = metrics.difficulty_label ?? "Muito Fácil";
@@ -2125,6 +2130,73 @@ async function exportSvg(tiled) {
     }
 }
 
+/// Executa uma exportação com diálogo nativo e fallback de caminho digitado.
+async function runExport({ dialog, direct, title, fallback, params = {}, describe }) {
+    let result;
+    try {
+        result = await rpc(dialog, params);
+    } catch (error) {
+        const text = String(error.message ?? error);
+        if (!text.startsWith("dialog_unavailable")) throw error;
+        const path = await askPath(title, fallback);
+        if (!path) {
+            setStatus("Exportação cancelada.");
+            return;
+        }
+        result = await rpc(direct, { ...params, path });
+    }
+
+    if (result.cancelled) {
+        setStatus("Exportação cancelada.");
+        return;
+    }
+    setStatus(describe(result));
+}
+
+async function exportPdf() {
+    return runExport({
+        dialog: "doc.exportPdfDialog",
+        direct: "doc.exportPdf",
+        title: "Exportar PDF 1:1:",
+        fallback: "C:/Temp/pista.pdf",
+        describe: (result) =>
+            `PDF 1:1: ${result.pages} página(s) · ${result.files[0] ?? ""}`,
+    });
+}
+
+async function exportObj() {
+    return runExport({
+        dialog: "doc.exportObjDialog",
+        direct: "doc.exportObj",
+        title: "Exportar pista 3D (Blender):",
+        fallback: "C:/Temp/pista.obj",
+        describe: (result) =>
+            `3D exportado: ${result.vertices} vértices, ${result.faces} faces · ${result.files[0] ?? ""}`,
+    });
+}
+
+async function exportRobot() {
+    return runExport({
+        dialog: "doc.exportRobotDialog",
+        direct: "doc.exportRobot",
+        title: "Exportar pontos do robô (arquivo base):",
+        fallback: "C:/Temp/pista-pontos.csv",
+        describe: (result) =>
+            `Robô: ${result.points} pontos · ${result.files[0] ?? ""}`,
+    });
+}
+
+async function exportTable() {
+    return runExport({
+        dialog: "doc.exportTableDialog",
+        direct: "doc.exportTable",
+        title: "Exportar tabela de coordenadas:",
+        fallback: "C:/Temp/pista-tabela.csv",
+        describe: (result) =>
+            `Matriz: ${result.points} pontos · ${result.files[0] ?? ""}`,
+    });
+}
+
 async function openDocument() {
     const path = await chooseFilePath(false);
     if (!path) {
@@ -2686,6 +2758,14 @@ async function runAction(action) {
             return exportSvg(false);
         case "export-tiled":
             return exportSvg(true);
+        case "export-pdf":
+            return exportPdf();
+        case "export-obj":
+            return exportObj();
+        case "export-robot":
+            return exportRobot();
+        case "export-table":
+            return exportTable();
         case "arena-default":
             return setArena(4000, 3000);
         case "arena-3x4":
