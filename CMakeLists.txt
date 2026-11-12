@@ -55,6 +55,7 @@ add_library(pf_bridge STATIC
     src/app/bridge/api.cpp
     src/app/bridge/api_doc.cpp
     src/app/bridge/dispatcher.cpp
+    src/app/bridge/preferences.cpp
 )
 target_include_directories(pf_bridge PUBLIC src)
 target_include_directories(pf_bridge PUBLIC vendor)
@@ -114,6 +115,7 @@ add_executable(pf_tests
     tests/test_svg.cpp
     tests/test_dispatcher.cpp
     tests/test_api_doc.cpp
+    tests/test_preferences.cpp
 )
 target_link_libraries(pf_tests PRIVATE pf_bridge)
 target_include_directories(pf_tests PRIVATE vendor)

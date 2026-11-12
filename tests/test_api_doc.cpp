@@ -793,7 +793,7 @@ TEST_CASE("API: diálogos nativos de abrir e salvar") {
     CHECK(opened["result"]["path"] == chosen.string());
     CHECK_FALSE(captured.save);
     CHECK(captured.title == "Abrir pista");
-    CHECK(api.state.last_dir == chosen.parent_path());
+    CHECK(api.state.preferences.last_dir == chosen.parent_path());
 
     const json saved = api.call(R"({"id":4,"method":"doc.saveDialog"})");
     REQUIRE(saved["ok"].get<bool>());

@@ -9,6 +9,7 @@ Este diretório reúne o formato dos arquivos e as decisões de arquitetura
 |-----------|-----------|
 | [`formato-pftrack.md`](formato-pftrack.md) | Projeto editável (`.pftrack`, schema 1) |
 | [`formato-pfsim.md`](formato-pfsim.md) | Documento do simulador (`.pfsim.json`, schema 1) |
+| [`formato-settings.md`](formato-settings.md) | Preferências locais (`settings.json`, schema 1) |
 
 ## Decisões de arquitetura
 

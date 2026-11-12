@@ -165,7 +165,7 @@ LayerId layer_param(const Json& params, LayerId fallback = LayerId::Track) {
 
 /// Pasta inicial dos diálogos de arquivo: última usada, senão a do documento.
 std::filesystem::path dialog_directory(const AppState& state) {
-    if (!state.last_dir.empty()) return state.last_dir;
+    if (!state.preferences.last_dir.empty()) return state.preferences.last_dir;
     if (!state.path.empty() && state.path.has_parent_path()) {
         return state.path.parent_path();
     }
@@ -225,7 +225,7 @@ void apply_arena(Arena& arena, const Json& value) {
 Json doc_summary(const AppState& state) {
     return Json{
         {"rev", state.scene.revision},
-        {"path", state.path.empty() ? Json(nullptr) : Json(state.path.string())},
+        {"path", state.path.empty() ? Json(nullptr) : Json(path_to_utf8(state.path))},
         {"arena", arena_json(state.scene.arena)},
         {"elements", state.scene.elements.size()},
         {"connections", state.scene.connections.size()},
@@ -307,18 +307,18 @@ void add_untracked_change(Dispatcher& dispatcher, AppState& state, std::string m
 void write_text_file(const std::filesystem::path& path, std::string_view content) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
-        fail("io_error", "Não foi possível gravar: " + path.string() + ".");
+        fail("io_error", "Não foi possível gravar: " + path_to_utf8(path) + ".");
     }
     file.write(content.data(), static_cast<std::streamsize>(content.size()));
     if (!file.good()) {
-        fail("io_error", "Falha ao gravar: " + path.string() + ".");
+        fail("io_error", "Falha ao gravar: " + path_to_utf8(path) + ".");
     }
 }
 
 /// Exporta a cena para SVG 1:1, em arquivo único ou em mosaico de páginas.
 Json export_svg(AppState& state, const Json& params) {
     require_object(params);
-    const std::filesystem::path path{string_param(params, "path")};
+    const std::filesystem::path path = path_from_utf8(string_param(params, "path"));
 
     io::SvgOptions options;
     options.tiled = bool_or(params, "tiled", false);
@@ -346,22 +346,25 @@ Json export_svg(AppState& state, const Json& params) {
     if (options.tiled) {
         const std::vector<io::SvgPage> tiles = io::to_svg_pages(state.scene, options);
         pages = static_cast<int>(tiles.size());
-        const std::string stem = path.stem().string();
-        const std::string extension =
-            path.extension().empty() ? std::string{".svg"} : path.extension().string();
+        const std::filesystem::path stem = path.stem();
+        const std::filesystem::path extension =
+            path.extension().empty() ? std::filesystem::path{".svg"} : path.extension();
         for (const io::SvgPage& page : tiles) {
             std::filesystem::path page_path = path;
-            page_path.replace_filename(stem + "-c" + std::to_string(page.column + 1) + "-r" +
-                                       std::to_string(page.row + 1) + extension);
+            std::filesystem::path name = stem;
+            name += "-c" + std::to_string(page.column + 1) + "-r" +
+                    std::to_string(page.row + 1);
+            name += extension;
+            page_path.replace_filename(name);
             write_text_file(page_path, page.content);
-            files.push_back(page_path.string());
+            files.push_back(path_to_utf8(page_path));
         }
     } else {
         write_text_file(path, io::to_svg(state.scene, options));
-        files.push_back(path.string());
+        files.push_back(path_to_utf8(path));
     }
 
-    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    if (path.has_parent_path()) state.remember_directory(path.parent_path());
     return Json{
         {"files", files},
         {"pages", pages},
@@ -407,7 +410,7 @@ Json path_table_json(const PathTable& table) {
 /// Exporta a cena para PDF 1:1, em página única ou mosaico.
 Json export_pdf(AppState& state, const Json& params) {
     require_object(params);
-    const std::filesystem::path path{string_param(params, "path")};
+    const std::filesystem::path path = path_from_utf8(string_param(params, "path"));
 
     io::PdfOptions options;
     options.tiled = bool_or(params, "tiled", false);
@@ -454,9 +457,9 @@ Json export_pdf(AppState& state, const Json& params) {
         cursor += 12;
     }
 
-    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    if (path.has_parent_path()) state.remember_directory(path.parent_path());
     return Json{
-        {"files", Json::array({path.string()})},
+        {"files", Json::array({path_to_utf8(path)})},
         {"pages", pages},
         {"tiled", options.tiled},
         {"marks", options.floor_marks},
@@ -470,7 +473,7 @@ Json export_pdf(AppState& state, const Json& params) {
 /// Exporta a pista em 3D (OBJ + MTL) para uso no Blender.
 Json export_obj(AppState& state, const Json& params) {
     require_object(params);
-    const std::filesystem::path path{string_param(params, "path")};
+    const std::filesystem::path path = path_from_utf8(string_param(params, "path"));
 
     io::ObjOptions options;
     options.scale = number_or(params, "scale", options.scale);
@@ -485,7 +488,7 @@ Json export_obj(AppState& state, const Json& params) {
 
     std::filesystem::path mtl_path = path;
     mtl_path.replace_extension(".mtl");
-    options.mtl_name = mtl_path.filename().string();
+    options.mtl_name = path_to_utf8(mtl_path.filename());
 
     if (path.has_parent_path()) {
         std::error_code error;
@@ -496,9 +499,9 @@ Json export_obj(AppState& state, const Json& params) {
     write_text_file(path, bundle.obj);
     write_text_file(mtl_path, bundle.mtl);
 
-    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    if (path.has_parent_path()) state.remember_directory(path.parent_path());
     return Json{
-        {"files", Json::array({path.string(), mtl_path.string()})},
+        {"files", Json::array({path_to_utf8(path), path_to_utf8(mtl_path)})},
         {"vertices", bundle.vertices},
         {"faces", bundle.faces},
         {"scale", options.scale},
@@ -510,7 +513,7 @@ Json export_obj(AppState& state, const Json& params) {
 /// Exporta os pontos e as instruções de pintura para um robô autônomo.
 Json export_robot(AppState& state, const Json& params) {
     require_object(params);
-    const std::filesystem::path path{string_param(params, "path")};
+    const std::filesystem::path path = path_from_utf8(string_param(params, "path"));
 
     io::RobotPathOptions options;
     options.step_mm = number_or(params, "step", options.step_mm);
@@ -528,11 +531,11 @@ Json export_robot(AppState& state, const Json& params) {
     const io::RobotPath robot = io::build_robot_path(state.scene, options);
 
     std::filesystem::path csv_path = path;
-    std::string base = path.stem().string();
+    std::string base = path_to_utf8(path.stem());
     if (base.ends_with("-pontos")) base.resize(base.size() - 7);
-    csv_path.replace_filename(base + "-pontos.csv");
+    csv_path.replace_filename(path_from_utf8(base + "-pontos.csv"));
     std::filesystem::path txt_path = path;
-    txt_path.replace_filename(base + "-instrucoes.txt");
+    txt_path.replace_filename(path_from_utf8(base + "-instrucoes.txt"));
 
     if (path.has_parent_path()) {
         std::error_code error;
@@ -542,9 +545,9 @@ Json export_robot(AppState& state, const Json& params) {
     write_text_file(csv_path, robot.points_csv);
     write_text_file(txt_path, robot.instructions);
 
-    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    if (path.has_parent_path()) state.remember_directory(path.parent_path());
     return Json{
-        {"files", Json::array({csv_path.string(), txt_path.string()})},
+        {"files", Json::array({path_to_utf8(csv_path), path_to_utf8(txt_path)})},
         {"points", robot.point_count},
         {"total_length_mm", robot.total_length_mm},
         {"step_mm", options.step_mm},
@@ -557,7 +560,7 @@ Json export_robot(AppState& state, const Json& params) {
 /// Exporta a matriz de coordenadas em CSV.
 Json export_table(AppState& state, const Json& params) {
     require_object(params);
-    const std::filesystem::path path{string_param(params, "path")};
+    const std::filesystem::path path = path_from_utf8(string_param(params, "path"));
 
     PathTableOptions options;
     options.step_mm = number_or(params, "step", 50.0);
@@ -572,9 +575,9 @@ Json export_table(AppState& state, const Json& params) {
     }
     write_text_file(path, path_table_csv(table));
 
-    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    if (path.has_parent_path()) state.remember_directory(path.parent_path());
     return Json{
-        {"files", Json::array({path.string()})},
+        {"files", Json::array({path_to_utf8(path)})},
         {"points", table.samples.size()},
         {"total_length_mm", table.total_length_mm},
         {"step_mm", table.step_mm},
@@ -587,7 +590,7 @@ Json export_table(AppState& state, const Json& params) {
 /// Exporta o documento do simulador (`.pfsim.json`).
 Json export_sim(AppState& state, const Json& params) {
     require_object(params);
-    const std::filesystem::path path{string_param(params, "path")};
+    const std::filesystem::path path = path_from_utf8(string_param(params, "path"));
 
     sim::SimDocOptions options;
     options.step_mm = number_or(params, "step", 50.0);
@@ -607,9 +610,9 @@ Json export_sim(AppState& state, const Json& params) {
     write_text_file(path, document.json);
 
     const PathTable& table = document.table;
-    if (path.has_parent_path()) state.last_dir = path.parent_path();
+    if (path.has_parent_path()) state.remember_directory(path.parent_path());
     return Json{
-        {"files", Json::array({path.string()})},
+        {"files", Json::array({path_to_utf8(path)})},
         {"schema", sim::kSimSchema},
         {"points", table.samples.size()},
         {"total_length_mm", table.total_length_mm},
@@ -705,22 +708,22 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
 
     dispatcher.add("doc.state", [&state](const Json&) {
         Json document = io::to_json(state.scene);
-        document["path"] = state.path.empty() ? Json(nullptr) : Json(state.path.string());
+        document["path"] = state.path.empty() ? Json(nullptr) : Json(path_to_utf8(state.path));
         return document;
     });
 
     dispatcher.add("doc.load", [&state](const Json& params) {
         require_object(params);
-        const std::filesystem::path path{string_param(params, "path")};
+        const std::filesystem::path path = path_from_utf8(string_param(params, "path"));
 
         std::ifstream file(path, std::ios::binary);
         if (!file) {
-            fail("io_error", "Não foi possível abrir: " + path.string() + ".");
+            fail("io_error", "Não foi possível abrir: " + path_to_utf8(path) + ".");
         }
         std::ostringstream buffer;
         buffer << file.rdbuf();
         if (!file.good() && !file.eof()) {
-            fail("io_error", "Falha ao ler: " + path.string() + ".");
+            fail("io_error", "Falha ao ler: " + path_to_utf8(path) + ".");
         }
 
         try {
@@ -730,7 +733,7 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         }
 
         state.path = std::filesystem::absolute(path);
-        if (state.path.has_parent_path()) state.last_dir = state.path.parent_path();
+        state.remember_file(state.path);
         state.history.reset();
         state.rebuild_index();
         return doc_summary(state);
@@ -749,8 +752,8 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
 
         const std::optional<std::filesystem::path> path = state.file_dialog(request);
         if (!path) return Json{{"cancelled", true}};
-        if (path->has_parent_path()) state.last_dir = path->parent_path();
-        return Json{{"path", path->string()}};
+        if (path->has_parent_path()) state.remember_directory(path->parent_path());
+        return Json{{"path", path_to_utf8(*path)}};
     });
 
     dispatcher.add("doc.saveDialog", [&state](const Json& params) -> Json {
@@ -764,12 +767,12 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         request.title = "Salvar pista como";
         request.initial_path = dialog_directory(state);
         request.default_name =
-            state.path.empty() ? "pista.pftrack" : state.path.filename().string();
+            state.path.empty() ? "pista.pftrack" : path_to_utf8(state.path.filename());
 
         const std::optional<std::filesystem::path> path = state.file_dialog(request);
         if (!path) return Json{{"cancelled", true}};
-        if (path->has_parent_path()) state.last_dir = path->parent_path();
-        return Json{{"path", path->string()}};
+        if (path->has_parent_path()) state.remember_directory(path->parent_path());
+        return Json{{"path", path_to_utf8(*path)}};
     });
 
     dispatcher.add("doc.save", [&state](const Json& params) {
@@ -777,7 +780,7 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
 
         std::filesystem::path path;
         if (params.contains("path")) {
-            path = string_param(params, "path");
+            path = path_from_utf8(string_param(params, "path"));
         } else if (!state.path.empty()) {
             path = state.path;
         } else {
@@ -791,16 +794,16 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
 
         std::ofstream file(path, std::ios::binary | std::ios::trunc);
         if (!file) {
-            fail("io_error", "Não foi possível gravar: " + path.string() + ".");
+            fail("io_error", "Não foi possível gravar: " + path_to_utf8(path) + ".");
         }
         file << io::to_string(state.scene);
         if (!file.good()) {
-            fail("io_error", "Falha ao gravar: " + path.string() + ".");
+            fail("io_error", "Falha ao gravar: " + path_to_utf8(path) + ".");
         }
 
         state.path = std::filesystem::absolute(path);
-        if (state.path.has_parent_path()) state.last_dir = state.path.parent_path();
-        return Json{{"path", state.path.string()}, {"rev", state.scene.revision}};
+        state.remember_file(state.path);
+        return Json{{"path", path_to_utf8(state.path)}, {"rev", state.scene.revision}};
     });
 
     dispatcher.add("doc.exportSvg", [&state](const Json& params) -> Json {
@@ -818,17 +821,17 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         request.title = "Exportar desenho SVG";
         request.initial_path = dialog_directory(state);
         request.default_name =
-            state.path.empty() ? "pista.svg" : state.path.stem().string() + ".svg";
+            state.path.empty() ? "pista.svg" : path_to_utf8(state.path.stem()) + ".svg";
         request.filter_label = "Desenho SVG (*.svg)";
         request.filter_pattern = "*.svg";
         request.default_extension = "svg";
 
         const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
         if (!chosen) return Json{{"cancelled", true}};
-        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+        if (chosen->has_parent_path()) state.remember_directory(chosen->parent_path());
 
         Json forwarded = params;
-        forwarded["path"] = chosen->string();
+        forwarded["path"] = path_to_utf8(*chosen);
         return export_svg(state, forwarded);
     });
 
@@ -847,17 +850,17 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         request.title = "Exportar PDF 1:1";
         request.initial_path = dialog_directory(state);
         request.default_name =
-            state.path.empty() ? "pista.pdf" : state.path.stem().string() + ".pdf";
+            state.path.empty() ? "pista.pdf" : path_to_utf8(state.path.stem()) + ".pdf";
         request.filter_label = "PDF (*.pdf)";
         request.filter_pattern = "*.pdf";
         request.default_extension = "pdf";
 
         const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
         if (!chosen) return Json{{"cancelled", true}};
-        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+        if (chosen->has_parent_path()) state.remember_directory(chosen->parent_path());
 
         Json forwarded = params;
-        forwarded["path"] = chosen->string();
+        forwarded["path"] = path_to_utf8(*chosen);
         return export_pdf(state, forwarded);
     });
 
@@ -876,17 +879,17 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         request.title = "Exportar pista 3D (Blender)";
         request.initial_path = dialog_directory(state);
         request.default_name =
-            state.path.empty() ? "pista.obj" : state.path.stem().string() + ".obj";
+            state.path.empty() ? "pista.obj" : path_to_utf8(state.path.stem()) + ".obj";
         request.filter_label = "Malha OBJ (*.obj)";
         request.filter_pattern = "*.obj";
         request.default_extension = "obj";
 
         const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
         if (!chosen) return Json{{"cancelled", true}};
-        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+        if (chosen->has_parent_path()) state.remember_directory(chosen->parent_path());
 
         Json forwarded = params;
-        forwarded["path"] = chosen->string();
+        forwarded["path"] = path_to_utf8(*chosen);
         return export_obj(state, forwarded);
     });
 
@@ -905,17 +908,17 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         request.title = "Exportar pontos do robô";
         request.initial_path = dialog_directory(state);
         request.default_name = state.path.empty() ? "pista-pontos.csv"
-                                                  : state.path.stem().string() + "-pontos.csv";
+                                                  : path_to_utf8(state.path.stem()) + "-pontos.csv";
         request.filter_label = "Pontos do robô (*.csv)";
         request.filter_pattern = "*.csv";
         request.default_extension = "csv";
 
         const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
         if (!chosen) return Json{{"cancelled", true}};
-        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+        if (chosen->has_parent_path()) state.remember_directory(chosen->parent_path());
 
         Json forwarded = params;
-        forwarded["path"] = chosen->string();
+        forwarded["path"] = path_to_utf8(*chosen);
         return export_robot(state, forwarded);
     });
 
@@ -934,17 +937,17 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         request.title = "Exportar tabela de coordenadas";
         request.initial_path = dialog_directory(state);
         request.default_name = state.path.empty() ? "pista-tabela.csv"
-                                                  : state.path.stem().string() + "-tabela.csv";
+                                                  : path_to_utf8(state.path.stem()) + "-tabela.csv";
         request.filter_label = "Tabela de coordenadas (*.csv)";
         request.filter_pattern = "*.csv";
         request.default_extension = "csv";
 
         const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
         if (!chosen) return Json{{"cancelled", true}};
-        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+        if (chosen->has_parent_path()) state.remember_directory(chosen->parent_path());
 
         Json forwarded = params;
-        forwarded["path"] = chosen->string();
+        forwarded["path"] = path_to_utf8(*chosen);
         return export_table(state, forwarded);
     });
 
@@ -963,17 +966,17 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
         request.title = "Exportar documento do simulador";
         request.initial_path = dialog_directory(state);
         request.default_name = state.path.empty() ? "pista.pfsim.json"
-                                                  : state.path.stem().string() + ".pfsim.json";
+                                                  : path_to_utf8(state.path.stem()) + ".pfsim.json";
         request.filter_label = "Documento do simulador (*.json)";
         request.filter_pattern = "*.json";
         request.default_extension = "json";
 
         const std::optional<std::filesystem::path> chosen = state.file_dialog(request);
         if (!chosen) return Json{{"cancelled", true}};
-        if (chosen->has_parent_path()) state.last_dir = chosen->parent_path();
+        if (chosen->has_parent_path()) state.remember_directory(chosen->parent_path());
 
         Json forwarded = params;
-        forwarded["path"] = chosen->string();
+        forwarded["path"] = path_to_utf8(*chosen);
         return export_sim(state, forwarded);
     });
 

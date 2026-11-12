@@ -24,6 +24,7 @@ const state = {
     savedSignature: null,
     dirty: false,
     exportOptions: {},
+    preferences: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -155,6 +156,7 @@ function markSaved() {
     state.savedSignature = docSignature(state.doc);
     state.dirty = false;
     updateFacts();
+    refreshPreferences().catch(() => {});
 }
 
 /// Abre um `<dialog>` de formulário e resolve com o `returnValue` ("ok", "cancel", …).
@@ -263,6 +265,64 @@ function renderInfo(info) {
 
     updateFacts();
     draw();
+}
+
+function splitRecentPath(path) {
+    const normalized = String(path ?? "");
+    const index = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+    return {
+        name: index >= 0 ? normalized.slice(index + 1) : normalized,
+        dir: index > 0 ? normalized.slice(0, index) : "",
+    };
+}
+
+function renderPreferences(preferences) {
+    state.preferences = preferences ?? null;
+    const list = el("recent-list");
+    if (!list) return;
+
+    const files = state.preferences?.recent_files ?? [];
+    list.textContent = "";
+
+    if (files.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "recent-empty";
+        empty.textContent = "Nenhum documento recente.";
+        list.appendChild(empty);
+    } else {
+        for (const file of files) {
+            const { name, dir } = splitRecentPath(file);
+            const item = document.createElement("li");
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "recent-item";
+            button.dataset.recent = file;
+            button.title = file;
+
+            const nameNode = document.createElement("span");
+            nameNode.className = "recent-name";
+            nameNode.textContent = name || file;
+
+            const dirNode = document.createElement("span");
+            dirNode.className = "recent-dir";
+            dirNode.textContent = dir;
+
+            button.append(nameNode, dirNode);
+            item.appendChild(button);
+            list.appendChild(item);
+        }
+    }
+
+    const clear = el("recent-clear");
+    if (clear) clear.hidden = files.length === 0;
+}
+
+async function refreshPreferences() {
+    try {
+        renderPreferences(await rpc("app.preferences"));
+    } catch {
+        renderPreferences(null);
+    }
 }
 
 async function refreshDoc() {
@@ -2522,6 +2582,16 @@ async function openDocument() {
         return;
     }
 
+    await loadDocumentPath(path);
+}
+
+async function openRecent(path) {
+    if (!path) return;
+    if (!(await confirmDiscard())) return;
+    await loadDocumentPath(path);
+}
+
+async function loadDocumentPath(path) {
     await rpc("doc.load", { path });
     state.selection = null;
     state.cursor = { x: 300, y: 300 };
@@ -2533,6 +2603,12 @@ async function openDocument() {
     await refreshDoc();
     markSaved();
     setStatus(`Aberto: ${path}`);
+}
+
+async function clearRecent() {
+    await rpc("app.clearRecent");
+    await refreshPreferences();
+    setStatus("Lista de recentes limpa.");
 }
 
 async function applyArena(arena) {
@@ -3127,6 +3203,8 @@ async function runAction(action) {
             return saveDocument();
         case "save-as":
             return saveDocumentAs();
+        case "recent-clear":
+            return clearRecent();
         case "export-svg":
             return exportSvg(false);
         case "export-tiled":
@@ -3197,6 +3275,15 @@ async function init() {
         if (tool) {
             event.preventDefault();
             setTool(tool.dataset.tool);
+            return;
+        }
+
+        const recent = event.target.closest("[data-recent]");
+        if (recent) {
+            event.preventDefault();
+            openRecent(recent.dataset.recent).catch((error) => {
+                setStatus(String(error.message ?? error));
+            });
             return;
         }
 

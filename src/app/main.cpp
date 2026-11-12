@@ -145,6 +145,8 @@ int main(int argc, char** argv) {
     }
 
     pf::AppState state;
+    state.preferences_path = pf::default_preferences_path();
+    state.preferences = pf::load_preferences(state.preferences_path);
     state.file_dialog = [](const pf::FileDialogRequest& request) {
         return pf::show_file_dialog(request);
     };

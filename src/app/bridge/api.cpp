@@ -59,6 +59,25 @@ void register_api(Dispatcher& dispatcher, AppState& state) {
 
     dispatcher.add("app.echo", [](const Json& params) { return params; });
 
+    dispatcher.add("app.preferences", [&state](const Json&) {
+        Json recent = Json::array();
+        for (const std::filesystem::path& file : state.preferences.recent_files) {
+            recent.push_back(path_to_utf8(file));
+        }
+        return Json{
+            {"path", path_to_utf8(state.preferences_path)},
+            {"last_dir", path_to_utf8(state.preferences.last_dir)},
+            {"recent_files", std::move(recent)},
+            {"max_recent", kMaxRecentFiles},
+        };
+    });
+
+    dispatcher.add("app.clearRecent", [&state](const Json&) {
+        state.preferences.recent_files.clear();
+        save_preferences(state.preferences_path, state.preferences);
+        return Json{{"recent_files", Json::array()}};
+    });
+
     register_doc_api(dispatcher, state);
 }
 

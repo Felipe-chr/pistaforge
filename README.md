@@ -94,6 +94,10 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
         validação de valores e preferências lembradas durante a sessão
   - [x] **Configurar arena** no painel: nome, largura, altura e margem, com
         validação (dimensões positivas e margem compatível)
+  - [x] **Preferências persistidas** em `%LOCALAPPDATA%\PistaForge\settings.json`
+        (última pasta usada e até 10 documentos recentes), com lista **Recentes**
+        no painel para reabrir um documento com um clique
+  - [x] Caminhos com acentos preservados em UTF-8 ao abrir, salvar e exportar
 - [x] Documentação e formatos (M8)
   - [x] `docs/formato-pftrack.md` (schema 1) e `docs/formato-pfsim.md`
   - [x] ADRs: cruzamentos em linha reta, formatos versionados e domínio em C++
@@ -102,6 +106,8 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 
 | Método | Entrada | Saída |
 |--------|---------|-------|
+| `app.preferences` | `{}` | `{path,last_dir,recent_files,max_recent}` |
+| `app.clearRecent` | `{}` | `{recent_files:[]}` |
 | `doc.new` | `{arena?}` | resumo do documento |
 | `doc.state` | `{}` | documento `.pftrack` + `path` |
 | `doc.load` | `{path}` | resumo do documento |
@@ -188,8 +194,8 @@ A janela é dividida em quatro áreas:
 - **Biblioteca** à esquerda, com as mesmas ações de inserção da faixa.
 - **Prancheta** ao centro, com grade, margem de segurança, cotas e cursor.
 - **Painel** à direita, com arquivo atual, estado de alterações, versão,
-  compilador, contadores do documento, seleção atual, arena (com **Configurar
-  arena**), estado da ponte e **Análise da pista**.
+  compilador, contadores do documento, **Recentes**, seleção atual, arena (com
+  **Configurar arena**), estado da ponte e **Análise da pista**.
 
 As formas da faixa **Inserir** (e da biblioteca) entram em **modo de
 posicionamento**: o primeiro clique na arena ancora a forma, o movimento do
@@ -245,6 +251,16 @@ sessão:
 **Configurar arena** (painel direito) permite alterar nome, largura, altura e
 margem em milímetros. Valores inválidos (dimensões não positivas ou margem maior
 que metade da arena) mantêm o diálogo aberto com a mensagem de erro.
+
+### Preferências e documentos recentes
+
+O aplicativo guarda a última pasta usada nos diálogos e os 10 documentos mais
+recentes em `%LOCALAPPDATA%\PistaForge\settings.json` (schema 1). O painel
+**Recentes** lista os arquivos do mais novo para o mais antigo; clicar reabre o
+documento (respeitando o aviso de alterações não salvas) e **Limpar lista**
+esvazia as entradas. O formato do arquivo de configuração está em
+[`docs/formato-settings.md`](docs/formato-settings.md) e o arquivo pode ser
+removido para voltar aos padrões.
 
 ### Exportação e impressão (SVG)
 
