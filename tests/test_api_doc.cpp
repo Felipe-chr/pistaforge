@@ -1028,9 +1028,10 @@ TEST_CASE("API: remover vários elementos em uma operação") {
     CHECK(state["result"]["elements"].empty());
     CHECK(state["result"]["connections"].empty());
 
-    // Uma única entrada de histórico desfaz a remoção inteira.
+    // Uma única entrada de histórico desfaz a remoção inteira (duas retas, uma
+    // conexão e a remoção em lote).
     const json history = api.call(R"({"id":7,"method":"doc.history"})");
-    CHECK(history["result"]["undo"] == 3);
+    CHECK(history["result"]["undo"] == 4);
 
     const json undone = api.call(R"({"id":8,"method":"doc.undo"})");
     REQUIRE(undone["ok"].get<bool>());
