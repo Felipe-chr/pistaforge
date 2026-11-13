@@ -414,8 +414,9 @@ ctest --preset windows-msvc-debug --output-on-failure
 ```
 
 A integração contínua (`.github/workflows/build.yml`) compila **Debug** e
-**Release** em `windows-latest` e roda `ctest` nas duas configurações. O
-submódulo FastWebUI é baixado automaticamente pelo checkout.
+**Release** em `windows-latest`, roda `ctest` nas duas configurações e, no job
+Release, gera o ZIP portátil como artefato (`PistaForge-win64`). O submódulo
+FastWebUI é baixado automaticamente pelo checkout.
 
 Executar (a janela do app abre sozinha; a mesma UI também responde no navegador):
 
@@ -440,6 +441,42 @@ Autoteste do núcleo e da ponte, sem abrir janela:
 .\build\windows-msvc-debug\Debug\PistaForge.exe --selftest
 ```
 
+## Pacote portátil
+
+O executável carrega ícone e metadados de versão definidos em
+`resources/pistaforge.rc` (produto, versão e licença). O ícone é gerado de
+forma determinística por um script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1
+```
+
+Para gerar o ZIP de distribuição (Release, com assets web e DLLs do runtime
+MSVC):
+
+```powershell
+cmake --preset windows-msvc-release
+cmake --build --preset windows-msvc-release
+ctest --preset windows-msvc-release
+cpack --preset windows-msvc-release
+```
+
+O arquivo sai em
+`build/windows-msvc-release/PistaForge-0.1.0-win64.zip` e contém:
+
+```
+PistaForge.exe
+web/                 index.html, styles.css, app.js
+vcruntime140*.dll    runtime do Visual C++
+msvcp140*.dll
+LICENSE
+README.md
+```
+
+Basta extrair e executar `PistaForge.exe`; não é preciso instalar o runtime do
+Visual C++ à parte. A primeira execução copia `web/` para
+`%LOCALAPPDATA%\PistaForge\web`, como descrito em "Notas de runtime".
+
 ## Estrutura
 
 ```
@@ -451,6 +488,8 @@ src/core/io/         `.pftrack` (JSON schema 1), SVG, PDF 1:1, OBJ/MTL e robô
 src/app/bridge/      Dispatcher JSON + métodos da API
 src/app/shell/       IShell/WebUiShell (FastWebUI)
 src/web/             index.html, styles.css, app.js
+resources/           ícone (.ico) e metadados do executável (.rc)
+tools/               gerador do ícone
 tests/               doctest
 vendor/FastWebUI/    submódulo git (frankalcantara/FastWebUI, commit fixado)
 vendor/doctest/      doctest 2.4.11 (header)

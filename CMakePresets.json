@@ -60,5 +60,17 @@
         "outputOnFailure": true
       }
     }
+  ],
+  "packagePresets": [
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc-release",
+      "configurations": [
+        "Release"
+      ],
+      "generators": [
+        "ZIP"
+      ]
+    }
   ]
 }

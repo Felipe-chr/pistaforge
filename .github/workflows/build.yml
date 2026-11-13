@@ -40,3 +40,15 @@ jobs:
 
       - name: Testar
         run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+
+      - name: Empacotar
+        if: matrix.config == 'Release'
+        run: cpack --config build/CPackConfig.cmake -C Release -G ZIP
+
+      - name: Publicar pacote
+        if: matrix.config == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PistaForge-win64
+          path: build/PistaForge-*-win64.zip
+          if-no-files-found: error

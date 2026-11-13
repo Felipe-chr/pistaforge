@@ -78,6 +78,16 @@ target_compile_definitions(pf_app PRIVATE
     PF_SOURCE_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/web"
 )
 
+# Icone e metadados do executavel (resources/pistaforge.rc).
+if(WIN32)
+    target_sources(pf_app PRIVATE resources/pistaforge.rc)
+    target_include_directories(pf_app PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+    set_source_files_properties(resources/pistaforge.rc PROPERTIES
+        COMPILE_DEFINITIONS
+            "PF_FILE_VERSION=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0;PF_FILE_FLAGS=0;PF_VERSION_STRING=\"${PF_VERSION}\""
+    )
+endif()
+
 add_custom_command(TARGET pf_app POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/src/web"
@@ -123,3 +133,26 @@ target_compile_options(pf_tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4 /wd5285>)
 target_compile_definitions(pf_tests PRIVATE PF_VERSION="${PF_VERSION}")
 
 add_test(NAME pf_tests COMMAND pf_tests)
+
+# ---------------------------------------------------------------------------
+# Distribuicao portatil (ZIP com executavel, assets web e runtime MSVC)
+# ---------------------------------------------------------------------------
+install(TARGETS pf_app RUNTIME DESTINATION .)
+install(DIRECTORY src/web/ DESTINATION web)
+install(FILES LICENSE README.md DESTINATION .)
+
+# Copia as DLLs do runtime MSVC exigidas pelo executavel.
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+include(InstallRequiredSystemLibraries)
+
+set(CPACK_PACKAGE_NAME "PistaForge")
+set(CPACK_PACKAGE_VENDOR "PistaForge")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "Editor de pistas de corrida em C++23 e FastWebUI")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Felipe-chr/pistaforge")
+set(CPACK_PACKAGE_VERSION "${PF_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "PistaForge-${PF_VERSION}-win64")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+include(CPack)
