@@ -23,6 +23,7 @@
 #include "core/io/scene_obj.hpp"
 #include "core/io/scene_pdf.hpp"
 #include "core/io/scene_svg.hpp"
+#include "core/scene/clipboard.hpp"
 #include "core/scene/element_ops.hpp"
 #include "core/scene/snap.hpp"
 #include "core/scene/validation.hpp"
@@ -118,6 +119,26 @@ std::uint64_t id_param(const Json& params, std::string_view key) {
         fail("invalid_params", "Campo '" + std::string{key} + "' deve ser um identificador.");
     }
     return value.get<std::uint64_t>();
+}
+
+/// Lê uma lista não vazia de identificadores, preservando a ordem.
+std::vector<ElementId> id_list_param(const Json& params, std::string_view key) {
+    const Json& value = field(params, key);
+    if (!value.is_array() || value.empty()) {
+        fail("invalid_params",
+             "Campo '" + std::string{key} + "' deve ser uma lista de identificadores.");
+    }
+
+    std::vector<ElementId> ids;
+    ids.reserve(value.size());
+    for (const Json& entry : value) {
+        if (!entry.is_number_unsigned() && !entry.is_number_integer()) {
+            fail("invalid_params",
+                 "Campo '" + std::string{key} + "' deve conter apenas identificadores.");
+        }
+        ids.push_back(entry.get<ElementId>());
+    }
+    return ids;
 }
 
 Vec2 vec2_from_json(const Json& value, std::string_view label) {
@@ -1089,6 +1110,55 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                    return Json{{"removed", id}};
                });
 
+    add_change(dispatcher, state, "doc.removeElements", "Remover elementos",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const std::vector<ElementId> ids = id_list_param(params, "ids");
+                   for (const ElementId id : ids) {
+                       if (state.scene.find_element(id) == nullptr) {
+                           fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                       }
+                   }
+                   const std::size_t removed = state.scene.remove_elements(ids);
+                   return Json{{"ids", ids}, {"removed", removed}};
+               });
+
+    // Copiar não altera o documento: guarda os elementos e as conexões internas
+    // para colar depois, inclusive em outro documento.
+    dispatcher.add("doc.copyElements", [&state](const Json& params) -> Json {
+        require_object(params);
+        const std::vector<ElementId> ids = id_list_param(params, "ids");
+        for (const ElementId id : ids) {
+            if (state.scene.find_element(id) == nullptr) {
+                fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+            }
+        }
+        state.clipboard = copy_elements(state.scene, ids);
+        return Json{
+            {"count", state.clipboard.elements.size()},
+            {"connections", state.clipboard.connections.size()},
+        };
+    });
+
+    add_change(dispatcher, state, "doc.pasteElements", "Colar elementos",
+               [&state](const Json& params) {
+                   require_object(params);
+                   if (state.clipboard.empty()) {
+                       fail("empty_clipboard", "Não há elementos copiados.");
+                   }
+
+                   Vec2 offset{20.0, 20.0};
+                   if (params.contains("offset")) {
+                       offset = point_param(params, "offset");
+                   } else if (params.contains("dx") || params.contains("dy")) {
+                       offset = {number_or(params, "dx", 20.0), number_or(params, "dy", 20.0)};
+                   }
+
+                   const std::vector<ElementId> ids =
+                       paste_elements(state.scene, state.clipboard, offset);
+                   return Json{{"ids", ids}, {"count", ids.size()}};
+               });
+
     add_change(dispatcher, state, "doc.connect", "Conectar portas", [&state](const Json& params) {
         require_object(params);
         const PortRef a = port_param(params, "a");
@@ -1289,6 +1359,33 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                },
                "merge");
 
+    add_change(dispatcher, state, "doc.moveElements", "Mover elementos",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const std::vector<ElementId> ids = id_list_param(params, "ids");
+                   const Vec2 delta = point_param(params, "delta");
+
+                   std::vector<Element*> targets;
+                   targets.reserve(ids.size());
+                   for (const ElementId id : ids) {
+                       Element* element = state.scene.find_element(id);
+                       if (element == nullptr) {
+                           fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                       }
+                       if (element->locked) {
+                           fail("element_locked", "O elemento está bloqueado.");
+                       }
+                       targets.push_back(element);
+                   }
+
+                   for (Element* element : targets) translate(*element, delta);
+                   return Json{
+                       {"ids", ids},
+                       {"delta", Json::array({delta.x, delta.y})},
+                   };
+               },
+               "merge");
+
     add_change(dispatcher, state, "doc.setElement", "Alterar elemento",
                [&state](const Json& params) {
                    require_object(params);
@@ -1430,6 +1527,28 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                    const ElementId created = copy.id;
                    state.scene.elements.push_back(std::move(copy));
                    return Json{{"id", created}, {"source", id}};
+               });
+
+    add_change(dispatcher, state, "doc.duplicateElements", "Duplicar elementos",
+               [&state](const Json& params) {
+                   require_object(params);
+                   const std::vector<ElementId> ids = id_list_param(params, "ids");
+                   for (const ElementId id : ids) {
+                       if (state.scene.find_element(id) == nullptr) {
+                           fail("not_found", "Elemento inexistente: " + std::to_string(id) + ".");
+                       }
+                   }
+
+                   Vec2 offset{20.0, 20.0};
+                   if (params.contains("offset")) {
+                       offset = point_param(params, "offset");
+                   } else if (params.contains("dx") || params.contains("dy")) {
+                       offset = {number_or(params, "dx", 20.0), number_or(params, "dy", 20.0)};
+                   }
+
+                   const std::vector<ElementId> created =
+                       paste_elements(state.scene, copy_elements(state.scene, ids), offset);
+                   return Json{{"ids", created}, {"count", created.size()}};
                });
 
     add_change(dispatcher, state, "doc.adjustLength", "Ajustar comprimento",

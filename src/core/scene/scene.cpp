@@ -71,6 +71,14 @@ bool Scene::remove_element(ElementId id) {
     return true;
 }
 
+std::size_t Scene::remove_elements(const std::vector<ElementId>& ids) {
+    std::size_t removed = 0;
+    for (const ElementId id : ids) {
+        if (remove_element(id)) ++removed;
+    }
+    return removed;
+}
+
 Connection& Scene::add_connection(PortRef a, PortRef b) {
     Connection connection{
         .id = allocate_id(),

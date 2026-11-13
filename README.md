@@ -133,7 +133,12 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.addArc` | `{center,radius,start?,sweep?,width?,layer?}` | `{id,rev}` |
 | `doc.addModule` | `{template,params?,transform?,width?,layer?}` | `{id,rev}` |
 | `doc.removeElement` | `{id}` | `{rev,removed}` |
+| `doc.removeElements` | `{ids:[id,...]}` | `{ids,removed,rev}` |
 | `doc.moveElement` | `{id,delta,merge?}` | `{id,delta,rev}` |
+| `doc.moveElements` | `{ids,delta,merge?}` | `{ids,delta,rev}` |
+| `doc.copyElements` | `{ids}` | `{count,connections}` |
+| `doc.pasteElements` | `{offset?}` | `{ids,count,rev}` |
+| `doc.duplicateElements` | `{ids,offset?}` | `{ids,count,rev}` |
 | `doc.setElement` | `{id,width?,layer?,hidden?,locked?,label?,difficulty?,merge?}` | `{id,rev}` |
 | `doc.setGeometry` | `{id,a?,b?,p0?,p1?,p2?,p3?,center?,radius?,start?,sweep?,merge?}` | `{id,rev}` |
 | `doc.flipElement` | `{id}` | `{id,rev}` |
@@ -170,6 +175,11 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `scene.elementInfo` | `{id}` | resumo do elemento (tipo, raio, ângulo, dificuldade) |
 
 `merge` agrupa alterações contínuas (arrastos) em um único passo de desfazer.
+`doc.copyElements` guarda os elementos e as conexões com as duas pontas no
+conjunto; `doc.pasteElements` recria tudo com ids novos e deslocamento, e o
+conteúdo pode ser colado no mesmo documento ou em outro. As operações em lote
+(`removeElements`, `moveElements`, `duplicateElements`) geram uma única entrada
+de desfazer.
 `scene.snap` devolve `kind` = `port`, `element`, `grid` ou `none`; o encaixe tenta
 as portas primeiro, depois o corpo dos elementos e por último a grade. Para
 `port` e `element`, `direction` traz a tangente unitária no ponto encaixado
@@ -214,9 +224,12 @@ entrada; a geometria é criada no núcleo C++ via `doc.*`.
 |------|------------|
 | Inserir forma | escolha a forma na faixa/biblioteca, clique para ancorar e clique de novo para confirmar |
 | Selecionar | ferramenta **Selecionar** (`V`) e clique no elemento |
-| Mover | arrastar o elemento selecionado (com encaixe) |
+| Selecionar vários | `Ctrl+clique` alterna um elemento na seleção; `Shift+clique` adiciona; `Ctrl+A` seleciona tudo |
+| Mover | arrastar o elemento selecionado (com encaixe); com vários selecionados, o arrasto move o grupo |
+| Copiar / colar | `Ctrl+C` copia a seleção (com as conexões internas) e `Ctrl+V` cola deslocada; também em **Inserir → Copiar/Colar** |
+| Duplicar | `Ctrl+D` duplica a seleção no lugar com deslocamento |
 | Editar geometria | com reta/Bézier selecionada, arraste as alças (quadradas = extremos, redondas = controles) |
-| Excluir | `Del` ou `Backspace` |
+| Excluir | `Del` ou `Backspace` (exclui todos os selecionados em uma única entrada de desfazer) |
 | Desenhar reta | ferramenta **Reta** (`L`) e arrastar |
 | Desenhar Bézier | ferramenta **Bézier** (`B`) e arrastar (com `Shift` para inverter a curvatura) |
 | Desfazer / refazer | `Ctrl+Z` / `Ctrl+Y` |

@@ -10,6 +10,9 @@ const state = {
     view: null,
     measuring: false,
     selection: null,
+    /// Outros elementos selecionados além do primário (`selection`).
+    selectionExtra: [],
+    pasteCount: 0,
     tool: "select",
     zoom: 1,
     pan: { x: 0, y: 0 },
@@ -350,12 +353,13 @@ async function refreshDoc() {
 
     state.doc = doc;
     updateDirtyState();
-    if (
-        state.selection != null &&
-        !(doc.elements ?? []).some((element) => element.id === state.selection)
-    ) {
+    const available = new Set((doc.elements ?? []).map((element) => element.id));
+    if (state.selection != null && !available.has(state.selection)) {
         state.selection = null;
     }
+    state.selectionExtra = state.selectionExtra.filter(
+        (id) => id !== state.selection && available.has(id)
+    );
     updateFacts();
     updateSelectionPanel();
     syncLayerToggles();
@@ -376,6 +380,70 @@ function syncLayerToggles() {
         const key = input.dataset.layer;
         if (key && key in layers) input.checked = Boolean(layers[key]);
     });
+}
+
+/* ----------------------------------------------------------------- seleção */
+
+/// Ids selecionados: o primário (`state.selection`) seguido dos extras.
+function selectionIds() {
+    const ids = [];
+    if (state.selection != null) ids.push(state.selection);
+    for (const id of state.selectionExtra) {
+        if (id !== state.selection && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+}
+
+function isSelected(id) {
+    return id === state.selection || state.selectionExtra.includes(id);
+}
+
+/// Seleciona apenas um elemento (ou limpa a seleção com `null`).
+function selectOnly(id) {
+    state.selection = id ?? null;
+    state.selectionExtra = [];
+}
+
+function addToSelection(id) {
+    if (id == null) return;
+    if (state.selection == null) {
+        state.selection = id;
+        return;
+    }
+    if (isSelected(id)) return;
+    state.selectionExtra.push(id);
+}
+
+function toggleSelection(id) {
+    if (id == null) return;
+    if (id === state.selection) {
+        state.selection = state.selectionExtra.pop() ?? null;
+        return;
+    }
+    const index = state.selectionExtra.indexOf(id);
+    if (index >= 0) {
+        state.selectionExtra.splice(index, 1);
+        return;
+    }
+    addToSelection(id);
+}
+
+function setSelection(ids) {
+    const unique = [...new Set((ids ?? []).filter((id) => id != null))];
+    state.selection = unique.length > 0 ? unique[unique.length - 1] : null;
+    state.selectionExtra = unique.slice(0, -1);
+}
+
+function clearSelection() {
+    state.selection = null;
+    state.selectionExtra = [];
+}
+
+function selectionStatus() {
+    const count = selectionIds().length;
+    if (count === 0) return "Seleção limpa.";
+    if (count === 1) return `Elemento ${state.selection} selecionado.`;
+    return `${count} elementos selecionados.`;
 }
 
 function updateSelectionPanel() {
@@ -403,8 +471,12 @@ function updateSelectionPanel() {
     el("selection-type").textContent = typeLabels[element.type] ?? element.type;
     el("selection-layer").textContent = LAYER_LABELS[element.layer] ?? element.layer;
     el("selection-width").textContent = formatMm(element.width ?? 19);
+    const count = selectionIds().length;
     el("selection-hint").textContent =
-        "Arraste as alças para editar a geometria · arraste o traçado para mover · Del exclui.";
+        count > 1
+            ? `${count} elementos selecionados · arraste para mover o grupo · ` +
+              "Ctrl+C copia · Del exclui."
+            : "Arraste as alças para editar a geometria · arraste o traçado para mover · Del exclui.";
 }
 
 /* ------------------------------------------- análise, validação e mini-ribbon */
@@ -705,7 +777,7 @@ async function ribbonAction(action) {
             break;
         case "duplicate": {
             const copy = await rpc("doc.duplicateElement", { id });
-            state.selection = copy.id;
+            selectOnly(copy.id);
             break;
         }
         case "copy-props":
@@ -815,7 +887,7 @@ async function focusElement(id) {
     const numeric = Number(id);
     if (!Number.isFinite(numeric)) return;
 
-    state.selection = numeric;
+    selectOnly(numeric);
     const element = state.doc?.elements?.find((candidate) => candidate.id === numeric);
     const view = state.view;
     const arena = docArena();
@@ -969,7 +1041,7 @@ function drawElements(ctx, doc, layers, scale) {
         if (polylines.length === 0) continue;
 
         const widthPx = Math.max(2, (element.width ?? 19) * scale);
-        const selected = element.id === state.selection;
+        const selected = isSelected(element.id);
 
         if (selected) {
             ctx.save();
@@ -1850,6 +1922,7 @@ function startPlacement(kind, label, options = {}) {
         endPort: null,
     };
     state.selection = null;
+    state.selectionExtra = [];
     state.snap = null;
     state.drag = null;
     el("canvas").classList.add("placing");
@@ -1889,7 +1962,7 @@ async function commitPlacement(placement) {
         });
 
         finishPlacement();
-        state.selection = null;
+        clearSelection();
         state.cursor = { x: Math.round(start.x), y: Math.round(start.y) };
         await refreshDoc();
         setStatus(
@@ -1925,7 +1998,7 @@ async function commitPlacement(placement) {
         });
 
         finishPlacement();
-        state.selection = null;
+        clearSelection();
         state.cursor = { x: Math.round(start.x), y: Math.round(start.y) };
         await refreshDoc();
         setStatus(
@@ -1950,7 +2023,7 @@ async function commitPlacement(placement) {
             }
 
             finishPlacement();
-            state.selection = null;
+            clearSelection();
             state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
             await refreshDoc();
             setStatus(
@@ -2025,7 +2098,7 @@ async function commitPlacement(placement) {
     );
 
     finishPlacement();
-    state.selection = result.id;
+    selectOnly(result.id);
     state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
     await refreshDoc();
     setStatus(
@@ -2253,13 +2326,22 @@ function queueMove(drag) {
             };
             if (Math.abs(step.x) < 1e-9 && Math.abs(step.y) < 1e-9) return;
 
-            await rpc("doc.moveElement", {
-                id: drag.id,
-                delta: [step.x, step.y],
-                merge: drag.mergeKey,
-            });
+            const ids = drag.ids ?? [drag.id];
+            if (ids.length > 1) {
+                await rpc("doc.moveElements", {
+                    ids,
+                    delta: [step.x, step.y],
+                    merge: drag.mergeKey,
+                });
+            } else {
+                await rpc("doc.moveElement", {
+                    id: drag.id,
+                    delta: [step.x, step.y],
+                    merge: drag.mergeKey,
+                });
+            }
             drag.applied = target;
-            translateLocal(drag.id, step);
+            for (const id of ids) translateLocal(id, step);
             draw();
         })
         .catch((error) => {
@@ -2298,7 +2380,7 @@ function queueHandle(drag) {
 async function undo() {
     try {
         const result = await rpc("doc.undo");
-        state.selection = null;
+        clearSelection();
         await refreshDoc();
         setStatus(`Desfeito: ${result.label}.`);
     } catch (error) {
@@ -2313,7 +2395,7 @@ async function undo() {
 async function redo() {
     try {
         const result = await rpc("doc.redo");
-        state.selection = null;
+        clearSelection();
         await refreshDoc();
         setStatus(`Refeito: ${result.label}.`);
     } catch (error) {
@@ -2326,16 +2408,87 @@ async function redo() {
 }
 
 async function deleteSelection() {
-    const id = state.selection;
-    if (id == null) {
+    const ids = selectionIds();
+    if (ids.length === 0) {
         setStatus("Selecione um elemento para excluir.");
         return;
     }
 
-    await rpc("doc.removeElement", { id });
-    state.selection = null;
+    if (ids.length === 1) {
+        await rpc("doc.removeElement", { id: ids[0] });
+        clearSelection();
+        await refreshDoc();
+        setStatus(`Elemento ${ids[0]} excluído.`);
+        return;
+    }
+
+    const result = await rpc("doc.removeElements", { ids });
+    clearSelection();
     await refreshDoc();
-    setStatus(`Elemento ${id} excluído.`);
+    setStatus(`${result.removed ?? ids.length} elementos excluídos.`);
+}
+
+/// Copia a seleção para a área de transferência do núcleo (preserva conexões).
+async function copySelection() {
+    const ids = selectionIds();
+    if (ids.length === 0) {
+        setStatus("Selecione um elemento para copiar.");
+        return;
+    }
+
+    const result = await rpc("doc.copyElements", { ids });
+    state.pasteCount = 0;
+    const connections = result.connections ?? 0;
+    setStatus(
+        `${result.count} elemento(s) copiado(s)` +
+            (connections > 0 ? ` e ${connections} conexão(ões)` : "") +
+            " · Ctrl+V cola."
+    );
+}
+
+/// Cola o conteúdo copiado com um deslocamento crescente a cada colagem.
+async function pasteClipboard() {
+    try {
+        const step = 20 * (state.pasteCount + 1);
+        const result = await rpc("doc.pasteElements", { offset: [step, step] });
+        state.pasteCount += 1;
+        setSelection(result.ids ?? []);
+        await refreshDoc();
+        setStatus(`${result.count} elemento(s) colado(s).`);
+    } catch (error) {
+        const text = String(error.message ?? error);
+        if (text.startsWith("empty_clipboard")) {
+            setStatus("Nada para colar · use Ctrl+C primeiro.");
+            return;
+        }
+        throw error;
+    }
+}
+
+async function duplicateSelection() {
+    const ids = selectionIds();
+    if (ids.length === 0) {
+        setStatus("Selecione um elemento para duplicar.");
+        return;
+    }
+
+    const result = await rpc("doc.duplicateElements", { ids });
+    setSelection(result.ids ?? []);
+    await refreshDoc();
+    setStatus(`${result.count} elemento(s) duplicado(s).`);
+}
+
+function selectAllElements() {
+    const ids = (state.doc?.elements ?? []).map((element) => element.id);
+    if (ids.length === 0) {
+        setStatus("O documento está vazio.");
+        return;
+    }
+    setSelection(ids);
+    updateSelectionPanel();
+    updateRibbon().catch(() => {});
+    draw();
+    setStatus(`${ids.length} elemento(s) selecionado(s).`);
 }
 
 async function newDocument() {
@@ -2343,6 +2496,7 @@ async function newDocument() {
 
     await rpc("doc.new");
     state.selection = null;
+    state.selectionExtra = [];
     state.cursor = { x: 300, y: 300 };
     state.snap = null;
     state.drag = null;
@@ -2725,6 +2879,7 @@ async function openRecent(path) {
 async function loadDocumentPath(path) {
     await rpc("doc.load", { path });
     state.selection = null;
+    state.selectionExtra = [];
     state.cursor = { x: 300, y: 300 };
     state.snap = null;
     state.drag = null;
@@ -2745,6 +2900,7 @@ async function clearRecent() {
 async function applyArena(arena) {
     await rpc("doc.setArena", arena);
     state.selection = null;
+    state.selectionExtra = [];
     state.cursor = { x: 300, y: 300 };
     resetView();
     await refreshDoc();
@@ -2963,14 +3119,28 @@ async function onPointerDown(event) {
     if (state.drag !== drag) return;
 
     if (pick.element != null) {
-        state.selection = pick.element;
+        const additive = event.ctrlKey || event.metaKey;
+        if (additive || event.shiftKey) {
+            if (additive) toggleSelection(pick.element);
+            else addToSelection(pick.element);
+            state.drag = null;
+            updateSelectionPanel();
+            updateRibbon().catch(() => {});
+            draw();
+            setStatus(selectionStatus());
+            return;
+        }
+
+        if (!isSelected(pick.element)) selectOnly(pick.element);
         updateSelectionPanel();
         updateRibbon().catch(() => {});
 
         if (!drag.ended) {
             const grab = pick.point ?? [point.x, point.y];
+            const ids = selectionIds();
             drag.mode = "move";
             drag.id = pick.element;
+            drag.ids = ids.length > 0 ? ids : [pick.element];
             drag.grabPoint = { x: grab[0], y: grab[1] };
             drag.offset = { x: grab[0] - point.x, y: grab[1] - point.y };
             drag.targetDelta = { x: 0, y: 0 };
@@ -2980,14 +3150,18 @@ async function onPointerDown(event) {
             drag.pending = 0;
             canvas.classList.add("dragging");
             draw();
-            setStatus(`Elemento ${pick.element} selecionado · arraste para mover.`);
+            setStatus(
+                drag.ids.length > 1
+                    ? `${drag.ids.length} elementos selecionados · arraste para mover o grupo.`
+                    : `Elemento ${pick.element} selecionado · arraste para mover.`
+            );
             return;
         }
 
         draw();
-        setStatus(`Elemento ${pick.element} selecionado.`);
+        setStatus(selectionStatus());
     } else {
-        state.selection = null;
+        clearSelection();
         updateSelectionPanel();
         hideRibbon();
         state.cursor = {
@@ -3136,7 +3310,10 @@ async function onPointerUp(event) {
         canvas.classList.remove("dragging");
         state.snap = null;
         await refreshDoc();
-        setStatus(`Elemento ${drag.id} movido.`);
+        const count = (drag.ids ?? [drag.id]).length;
+        setStatus(
+            count > 1 ? `${count} elementos movidos.` : `Elemento ${drag.id} movido.`
+        );
         return;
     }
 
@@ -3192,7 +3369,7 @@ async function onPointerUp(event) {
                 width: 19,
             });
             createdId = result.id;
-            state.selection = result.id;
+            selectOnly(result.id);
             await refreshDoc();
             setStatus(`Reta ${result.id} criada.`);
         } else {
@@ -3205,7 +3382,7 @@ async function onPointerUp(event) {
                 width: 19,
             });
             createdId = result.id;
-            state.selection = result.id;
+            selectOnly(result.id);
             await refreshDoc();
             setStatus(`Bézier ${result.id} criada.`);
         }
@@ -3330,6 +3507,10 @@ async function runAction(action) {
             return redo();
         case "delete":
             return deleteSelection();
+        case "copy":
+            return copySelection();
+        case "paste":
+            return pasteClipboard();
         case "validate-track":
             return validateTrack();
         case "robot-vision":
@@ -3505,6 +3686,24 @@ async function init() {
                 redo().catch((error) => {
                     setStatus(String(error.message ?? error));
                 });
+            } else if (key === "c") {
+                event.preventDefault();
+                copySelection().catch((error) => {
+                    setStatus(String(error.message ?? error));
+                });
+            } else if (key === "v") {
+                event.preventDefault();
+                pasteClipboard().catch((error) => {
+                    setStatus(String(error.message ?? error));
+                });
+            } else if (key === "d") {
+                event.preventDefault();
+                duplicateSelection().catch((error) => {
+                    setStatus(String(error.message ?? error));
+                });
+            } else if (key === "a") {
+                event.preventDefault();
+                selectAllElements();
             }
             return;
         }
@@ -3539,7 +3738,7 @@ async function init() {
                     el("canvas").classList.remove("dragging", "panning");
                     refreshDoc().catch(() => {});
                 } else {
-                    state.selection = null;
+                    clearSelection();
                     updateSelectionPanel();
                     hideRibbon();
                     setTool("select");

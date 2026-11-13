@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -69,6 +70,10 @@ struct Scene {
 
     /// Remove o elemento e qualquer conexão que o referencie.
     bool remove_element(ElementId id);
+
+    /// Remove vários elementos (e as conexões que os referenciam) em uma única
+    /// operação. Devolve quantos elementos existiam e foram removidos.
+    std::size_t remove_elements(const std::vector<ElementId>& ids);
 
     Connection& add_connection(PortRef a, PortRef b);
 

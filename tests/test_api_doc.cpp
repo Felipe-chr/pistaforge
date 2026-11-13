@@ -1,4 +1,4 @@
-﻿#include <cmath>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -998,4 +998,183 @@ TEST_CASE("API: conversão de módulo migra portas in/out") {
         (connection["a"][0] == module_id && connection["a"][1] == "start") ||
         (connection["b"][0] == module_id && connection["b"][1] == "start");
     CHECK(uses_start);
+}
+
+TEST_CASE("API: remover vários elementos em uma operação") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto first = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+    const auto second = api.call(
+        R"({"id":3,"method":"doc.addLine","params":{"a":[100,0],"b":[200,0]}})")["result"]["id"].get<std::uint64_t>();
+
+    api.call_json(json{
+        {"id", 4},
+        {"method", "doc.connect"},
+        {"params",
+         {{"a", port_request(first, "end")}, {"b", port_request(second, "start")}}},
+    });
+
+    const json removed = api.call_json(json{
+        {"id", 5},
+        {"method", "doc.removeElements"},
+        {"params", {{"ids", {first, second}}}},
+    });
+    REQUIRE(removed["ok"].get<bool>());
+    CHECK(removed["result"]["removed"] == 2);
+    CHECK(removed["result"]["ids"].size() == 2);
+
+    const json state = api.call(R"({"id":6,"method":"doc.state"})");
+    CHECK(state["result"]["elements"].empty());
+    CHECK(state["result"]["connections"].empty());
+
+    // Uma única entrada de histórico desfaz a remoção inteira.
+    const json history = api.call(R"({"id":7,"method":"doc.history"})");
+    CHECK(history["result"]["undo"] == 3);
+
+    const json undone = api.call(R"({"id":8,"method":"doc.undo"})");
+    REQUIRE(undone["ok"].get<bool>());
+    const json restored = api.call(R"({"id":9,"method":"doc.state"})");
+    CHECK(restored["result"]["elements"].size() == 2);
+    CHECK(restored["result"]["connections"].size() == 1);
+}
+
+TEST_CASE("API: validação das operações em lote") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto id = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+
+    const json empty = api.call_json(json{
+        {"id", 3}, {"method", "doc.removeElements"}, {"params", {{"ids", json::array()}}}});
+    CHECK_FALSE(empty["ok"].get<bool>());
+    CHECK(empty["error"]["code"] == "invalid_params");
+
+    const json missing = api.call_json(json{
+        {"id", 4}, {"method", "doc.removeElements"}, {"params", {{"ids", {id, 9999}}}}});
+    CHECK_FALSE(missing["ok"].get<bool>());
+    CHECK(missing["error"]["code"] == "not_found");
+
+    // A validação não altera a cena quando um id é inválido.
+    const json state = api.call(R"({"id":5,"method":"doc.state"})");
+    CHECK(state["result"]["elements"].size() == 1);
+}
+
+TEST_CASE("API: mover vários elementos agrupa arrastos") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto first = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+    const auto second = api.call(
+        R"({"id":3,"method":"doc.addLine","params":{"a":[100,0],"b":[200,0]}})")["result"]["id"].get<std::uint64_t>();
+
+    const json moved = api.call_json(json{
+        {"id", 4},
+        {"method", "doc.moveElements"},
+        {"params", {{"ids", {first, second}}, {"delta", {10.0, 5.0}}, {"merge", "drag-2"}}},
+    });
+    REQUIRE(moved["ok"].get<bool>());
+    CHECK(moved["result"]["ids"].size() == 2);
+    CHECK(moved["result"]["delta"][0] == 10.0);
+
+    api.call_json(json{
+        {"id", 5},
+        {"method", "doc.moveElements"},
+        {"params", {{"ids", {first, second}}, {"delta", {10.0, 5.0}}, {"merge", "drag-2"}}},
+    });
+
+    const json history = api.call(R"({"id":6,"method":"doc.history"})");
+    CHECK(history["result"]["undo"] == 3);
+
+    const json state = api.call(R"({"id":7,"method":"doc.state"})");
+    REQUIRE(state["result"]["elements"].size() == 2);
+    CHECK(state["result"]["elements"][0]["a"][0] == 20.0);
+    CHECK(state["result"]["elements"][0]["a"][1] == 10.0);
+    CHECK(state["result"]["elements"][1]["a"][0] == 120.0);
+    CHECK(state["result"]["elements"][1]["a"][1] == 10.0);
+
+    const json locked = api.call_json(json{
+        {"id", 8},
+        {"method", "doc.setElement"},
+        {"params", {{"id", second}, {"locked", true}}},
+    });
+    REQUIRE(locked["ok"].get<bool>());
+
+    const json blocked = api.call_json(json{
+        {"id", 9},
+        {"method", "doc.moveElements"},
+        {"params", {{"ids", {first, second}}, {"delta", {10.0, 0.0}}}},
+    });
+    CHECK_FALSE(blocked["ok"].get<bool>());
+    CHECK(blocked["error"]["code"] == "element_locked");
+}
+
+TEST_CASE("API: copiar, colar e duplicar elementos") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+    const auto first = api.call(
+        R"({"id":2,"method":"doc.addLine","params":{"a":[0,0],"b":[100,0]}})")["result"]["id"].get<std::uint64_t>();
+    const auto second = api.call(
+        R"({"id":3,"method":"doc.addLine","params":{"a":[100,0],"b":[200,0]}})")["result"]["id"].get<std::uint64_t>();
+    api.call_json(json{
+        {"id", 4},
+        {"method", "doc.connect"},
+        {"params",
+         {{"a", port_request(first, "end")}, {"b", port_request(second, "start")}}},
+    });
+
+    const json copied = api.call_json(json{
+        {"id", 5},
+        {"method", "doc.copyElements"},
+        {"params", {{"ids", {first, second}}}},
+    });
+    REQUIRE(copied["ok"].get<bool>());
+    CHECK(copied["result"]["count"] == 2);
+    CHECK(copied["result"]["connections"] == 1);
+
+    // Copiar não altera o documento nem a revisão.
+    const json untouched = api.call(R"({"id":6,"method":"doc.state"})");
+    CHECK(untouched["result"]["elements"].size() == 2);
+
+    const json pasted = api.call(R"({"id":7,"method":"doc.pasteElements","params":{}})");
+    REQUIRE(pasted["ok"].get<bool>());
+    CHECK(pasted["result"]["count"] == 2);
+    const auto pasted_first = pasted["result"]["ids"][0].get<std::uint64_t>();
+    CHECK(pasted_first > second);
+
+    const json state = api.call(R"({"id":8,"method":"doc.state"})");
+    CHECK(state["result"]["elements"].size() == 4);
+    CHECK(state["result"]["connections"].size() == 2);
+    CHECK(state["result"]["elements"][2]["a"][0] == 20.0);
+    CHECK(state["result"]["elements"][2]["a"][1] == 20.0);
+
+    const json pasted_far = api.call_json(json{
+        {"id", 9},
+        {"method", "doc.pasteElements"},
+        {"params", {{"offset", {0.0, 500.0}}}},
+    });
+    REQUIRE(pasted_far["ok"].get<bool>());
+    const json far_state = api.call(R"({"id":10,"method":"doc.state"})");
+    CHECK(far_state["result"]["elements"][4]["a"][1] == 500.0);
+
+    const json duplicated = api.call_json(json{
+        {"id", 11},
+        {"method", "doc.duplicateElements"},
+        {"params", {{"ids", {first, second}}, {"offset", {0.0, 1000.0}}}},
+    });
+    REQUIRE(duplicated["ok"].get<bool>());
+    CHECK(duplicated["result"]["count"] == 2);
+
+    const json final_state = api.call(R"({"id":12,"method":"doc.state"})");
+    CHECK(final_state["result"]["elements"].size() == 8);
+    CHECK(final_state["result"]["connections"].size() == 4);
+}
+
+TEST_CASE("API: colar sem copiar falha") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const json pasted = api.call(R"({"id":2,"method":"doc.pasteElements","params":{}})");
+    CHECK_FALSE(pasted["ok"].get<bool>());
+    CHECK(pasted["error"]["code"] == "empty_clipboard");
 }

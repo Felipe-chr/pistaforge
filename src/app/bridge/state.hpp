@@ -8,6 +8,7 @@
 
 #include "app/bridge/preferences.hpp"
 #include "core/geometry/index.hpp"
+#include "core/scene/clipboard.hpp"
 #include "core/scene/history.hpp"
 #include "core/scene/scene.hpp"
 
@@ -40,6 +41,8 @@ struct AppState {
     std::filesystem::path preferences_path;
     History history;
     FileDialogHandler file_dialog;
+    /// Elementos copiados por `doc.copyElements`, prontos para `doc.pasteElements`.
+    ElementClipboard clipboard;
 
     void rebuild_index() { index.rebuild(scene); }
 
