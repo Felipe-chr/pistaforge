@@ -1,5 +1,7 @@
 # PistaForge
 
+[![build](https://github.com/Felipe-chr/pistaforge/actions/workflows/build.yml/badge.svg)](https://github.com/Felipe-chr/pistaforge/actions/workflows/build.yml)
+
 Editor gráfico de pistas para robôs seguidores de linha, no estilo Inkscape
 simplificado. A arena (ex.: 4 × 3 m) é definida pelo usuário e o traçado é desenhado
 dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
@@ -410,6 +412,10 @@ Testes:
 ```powershell
 ctest --preset windows-msvc-debug --output-on-failure
 ```
+
+A integração contínua (`.github/workflows/build.yml`) compila **Debug** e
+**Release** em `windows-latest` e roda `ctest` nas duas configurações. O
+submódulo FastWebUI é baixado automaticamente pelo checkout.
 
 Executar (a janela do app abre sozinha; a mesma UI também responde no navegador):
 

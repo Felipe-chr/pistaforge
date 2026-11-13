@@ -1,0 +1,42 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows (${{ matrix.config }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Configurar
+        run: >
+          cmake -S . -B build -A x64
+          -DCMAKE_CONFIGURATION_TYPES=${{ matrix.config }}
+          -DBUILD_SHARED_LIBS=OFF
+          -DWEBUI_BUILD_EXAMPLES=OFF
+
+      - name: Compilar
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+
+      - name: Testar
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
