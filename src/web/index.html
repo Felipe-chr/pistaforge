@@ -173,6 +173,40 @@
 
                 <div class="ribbon-group">
                     <div class="ribbon-items">
+                        <button class="ribbon-button" data-action="insert-arrow" title="Inserir seta de direção (clique na arena)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M10 20 H48"/>
+                                <path d="M38 12 L48 20 L38 28"/>
+                            </svg>
+                            <span>Seta</span>
+                        </button>
+                        <button class="ribbon-button" data-action="insert-text" title="Inserir texto de anotação (clique na arena)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M18 10 H46 M32 10 V32 M24 32 H40"/>
+                            </svg>
+                            <span>Texto</span>
+                        </button>
+                        <button class="ribbon-button" data-action="insert-guide" title="Inserir guia: clique no início e no fim da linha">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M12 30 L52 10" stroke-dasharray="5 3"/>
+                                <circle cx="12" cy="30" r="2.5" fill="currentColor" stroke="none"/>
+                                <circle cx="52" cy="10" r="2.5" fill="currentColor" stroke="none"/>
+                            </svg>
+                            <span>Guia</span>
+                        </button>
+                        <button class="ribbon-button" data-action="clear-annotations" title="Remover setas, textos e guias (mantém largada e chegada)">
+                            <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
+                                <path d="M16 12 H48 M22 12 V32 M42 12 V32"/>
+                                <path d="M26 18 L38 28 M38 18 L26 28" opacity="0.6"/>
+                            </svg>
+                            <span>Limpar</span>
+                        </button>
+                    </div>
+                    <div class="ribbon-group-title">Anotações</div>
+                </div>
+
+                <div class="ribbon-group">
+                    <div class="ribbon-items">
                         <button class="ribbon-button" data-action="undo" title="Desfazer (Ctrl+Z)">
                             <svg class="ribbon-icon" viewBox="0 0 64 40" aria-hidden="true">
                                 <path d="M18 30 C 18 14, 48 14, 48 26"/>
@@ -438,6 +472,14 @@
                 <h3>Reta</h3>
                 <button class="library-item" data-action="insert-line">Linha</button>
             </div>
+
+            <div class="group">
+                <h3>Anotações</h3>
+                <button class="library-item" data-action="insert-arrow">Seta de direção</button>
+                <button class="library-item" data-action="insert-text">Texto</button>
+                <button class="library-item" data-action="insert-guide">Guia</button>
+                <button class="library-item" data-action="clear-annotations">Limpar anotações</button>
+            </div>
         </section>
 
         <section class="panel">
@@ -590,6 +632,18 @@
                 <button value="save" class="btn primary">Salvar</button>
                 <button value="cancel" class="btn ghost">Cancelar</button>
                 <button value="discard" class="btn ghost">Descartar</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="text-dialog" class="path-dialog">
+        <form method="dialog">
+            <h2 id="text-dialog-title">Texto do marcador</h2>
+            <label for="text-input" id="text-dialog-label">Texto</label>
+            <input id="text-input" type="text" maxlength="120" spellcheck="false" autocomplete="off">
+            <div class="dialog-actions">
+                <button value="ok" class="btn primary">OK</button>
+                <button value="cancel" class="btn ghost">Cancelar</button>
             </div>
         </form>
     </dialog>

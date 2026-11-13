@@ -356,6 +356,58 @@ TEST_CASE("API: largada e chegada do circuito") {
     CHECK(bad["error"]["code"] == "invalid_params");
 }
 
+TEST_CASE("API: guias e limpeza de anotações") {
+    Api api;
+    api.call(R"({"id":1,"method":"doc.new"})");
+
+    const json guide = api.call(
+        R"({"id":2,"method":"doc.addGuide","params":{"a":[100,100],"b":[900,100]}})");
+    REQUIRE(guide["ok"].get<bool>());
+    CHECK(guide["result"]["id"] == 1);
+
+    const json second = api.call(
+        R"({"id":3,"method":"doc.addGuide","params":{"a":[100,200],"b":[100,800]}})");
+    REQUIRE(second["ok"].get<bool>());
+
+    json state = api.call(R"({"id":4,"method":"doc.state"})");
+    REQUIRE(state["result"]["guides"].size() == 2);
+    CHECK(state["result"]["guides"][0]["a"][0] == 100.0);
+    CHECK(state["result"]["guides"][0]["b"][1] == 100.0);
+
+    const json invalid =
+        api.call(R"({"id":5,"method":"doc.addGuide","params":{"a":[10,10],"b":[10,10]}})");
+    CHECK_FALSE(invalid["ok"].get<bool>());
+    CHECK(invalid["error"]["code"] == "invalid_params");
+
+    // Marcadores: largada/chegada são preservadas na limpeza.
+    api.call(R"({"id":6,"method":"doc.setStartFinish","params":{"kind":"start","x":100,"y":100,"angle":90}})");
+    api.call(R"({"id":7,"method":"doc.addMarker","params":{"type":"direction_arrow","x":300,"y":300,"angle":0}})");
+    api.call(R"({"id":8,"method":"doc.addMarker","params":{"type":"text","x":400,"y":400,"text":"curva 1"}})");
+
+    const json cleared = api.call(R"({"id":9,"method":"doc.clearAnnotations","params":{}})");
+    REQUIRE(cleared["ok"].get<bool>());
+    CHECK(cleared["result"]["markers"] == 2);
+    CHECK(cleared["result"]["guides"] == 2);
+
+    state = api.call(R"({"id":10,"method":"doc.state"})");
+    REQUIRE(state["result"]["markers"].size() == 1);
+    CHECK(state["result"]["markers"][0]["type"] == "start");
+    CHECK(state["result"]["guides"].empty());
+
+    const json guides_cleared = api.call(
+        R"({"id":11,"method":"doc.clearGuides","params":{}})");
+    REQUIRE(guides_cleared["ok"].get<bool>());
+    CHECK(guides_cleared["result"]["removed"] == 0);
+
+    // A limpeza entra no histórico e pode ser desfeita.
+    api.call(R"({"id":12,"method":"doc.undo"})");
+    const json undone = api.call(R"({"id":13,"method":"doc.undo"})");
+    REQUIRE(undone["ok"].get<bool>());
+    state = api.call(R"({"id":14,"method":"doc.state"})");
+    CHECK(state["result"]["guides"].size() == 2);
+    CHECK(state["result"]["markers"].size() == 3);
+}
+
 TEST_CASE("API: visibilidade de camadas") {
     Api api;
     api.call(R"({"id":1,"method":"doc.new"})");

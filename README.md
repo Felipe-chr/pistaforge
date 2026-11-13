@@ -30,7 +30,7 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
       **Exibir**), ícones SVG de curvas e inserção real de elementos
 - [x] Biblioteca lateral, alternância de camadas, desfazer e diálogo nativo
       do Windows para abrir/salvar (com fallback em `<dialog>`)
-- [x] Testes com doctest e alvo `pf_tests` — 140 casos / 1849 asserções
+- [x] Testes com doctest e alvo `pf_tests` — 155 casos / 1977 asserções
 - [x] Benchmark: round-trip de 5k elementos em menos de 1 s (Debug)
 - [x] Spike de latência: p50 ≈ 9,7 ms / p95 ≈ 17,0 ms (100 chamadas)
 - [x] Editor MVP com canvas interativo (M2)
@@ -152,6 +152,9 @@ dentro dela com uma biblioteca de curvas/cruzamentos e Béziers livres.
 | `doc.connect` | `{a:[id,port],b:[id,port]}` | `{id,rev}` |
 | `doc.disconnect` | `{id}` | `{rev,removed}` |
 | `doc.addMarker` | `{type,x,y,angle?,text?}` | `{id,rev}` |
+| `doc.addGuide` | `{a:[x,y],b:[x,y]}` | `{id,rev}` |
+| `doc.clearGuides` | `{}` | `{removed,rev}` |
+| `doc.clearAnnotations` | `{}` | `{markers,guides,rev}` |
 | `doc.setStartFinish` | `{kind?:start\|finish\|start_finish,x,y,angle?}` | `{id,type,x,y,angle,rev}` |
 | `doc.clearStartFinish` | `{kind?}` | `{removed,rev}` |
 | `doc.setArena` | `{name?,width?,height?,margin?,show_dimensions?}` | `{rev,arena}` |
@@ -219,10 +222,17 @@ entrada; a geometria é criada no núcleo C++ via `doc.*`.
 | Pan | botão do meio arrastando, `Espaço` + arrasto ou arrastar em área vazia com o botão esquerdo |
 | Largada / chegada | **Inserir → Circuito → Largada/Chegada** e clique sobre a pista |
 | Remover largada/chegada | **Inserir → Circuito → Remover** |
+| Inserir seta | **Inserir → Anotações → Seta** e clique na arena |
+| Inserir texto | **Inserir → Anotações → Texto**, clique na arena e informe o texto |
+| Inserir guia | **Inserir → Anotações → Guia**, clique no início e no fim da linha |
+| Limpar anotações | **Inserir → Anotações → Limpar** remove setas, textos e guias, preservando largada e chegada |
 | Ímã de pontas | ao posicionar ou desenhar, aproxime a ponta de uma porta existente: ela trava e conecta sozinha |
 | Cancelar | `Esc` (posicionamento, arrasto ou seleção) |
 
 O arrasto contínuo gera uma única entrada de desfazer (mesma chave `merge`).
+Setas, textos e guias são anotações: ao inserir uma guia, a camada **Guias** é
+ativada automaticamente, e **Limpar anotações** remove apenas esses itens,
+preservando largada e chegada.
 
 Abrir e salvar usam os diálogos nativos do Windows (`GetOpenFileNameW` /
 `GetSaveFileNameW`), começando na última pasta usada. Se o diálogo nativo não

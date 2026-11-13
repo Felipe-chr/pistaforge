@@ -1229,6 +1229,48 @@ void register_doc_api(Dispatcher& dispatcher, AppState& state) {
                    return Json{{"removed", before - state.scene.markers.size()}};
                });
 
+    // Insere uma linha de guia entre dois pontos.
+    add_change(dispatcher, state, "doc.addGuide", "Inserir guia", [&state](const Json& params) {
+        require_object(params);
+
+        Guide guide;
+        guide.id = state.scene.allocate_id();
+        guide.a = point_param(params, "a");
+        guide.b = point_param(params, "b");
+        if ((guide.b - guide.a).length() < 1.0) {
+            fail("invalid_params", "A guia precisa ter pelo menos 1 mm.");
+        }
+
+        const GuideId id = guide.id;
+        state.scene.guides.push_back(std::move(guide));
+        return Json{{"id", id}};
+    });
+
+    add_change(dispatcher, state, "doc.clearGuides", "Remover guias", [&state](const Json&) {
+        const std::size_t removed = state.scene.guides.size();
+        state.scene.guides.clear();
+        return Json{{"removed", removed}};
+    });
+
+    // Remove setas, textos e guias, preservando largada e chegada.
+    add_change(dispatcher, state, "doc.clearAnnotations", "Limpar anotações",
+               [&state](const Json&) {
+                   const std::size_t markers_before = state.scene.markers.size();
+                   std::erase_if(state.scene.markers, [](const Marker& marker) {
+                       return marker.type != MarkerType::Start &&
+                              marker.type != MarkerType::Finish &&
+                              marker.type != MarkerType::StartFinish;
+                   });
+                   const std::size_t markers_removed =
+                       markers_before - state.scene.markers.size();
+                   const std::size_t guides_removed = state.scene.guides.size();
+                   state.scene.guides.clear();
+                   return Json{
+                       {"markers", markers_removed},
+                       {"guides", guides_removed},
+                   };
+               });
+
     add_change(dispatcher, state, "doc.moveElement", "Mover elemento",
                [&state](const Json& params) {
                    require_object(params);

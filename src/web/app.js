@@ -199,6 +199,24 @@ function askDialog(id, onOpen) {
     });
 }
 
+/// Pede um texto curto para anotações. Devolve `null` quando cancelado.
+async function askTextDialog(title, label, value = "") {
+    const dialog = el("text-dialog");
+    if (!dialog || typeof dialog.showModal !== "function") {
+        return window.prompt(title, value);
+    }
+
+    el("text-dialog-title").textContent = title;
+    el("text-dialog-label").textContent = label;
+    const input = el("text-input");
+    input.value = value;
+    const result = await askDialog("text-dialog", () => {
+        input.focus();
+        input.select();
+    });
+    return result === "ok" ? input.value.trim() : null;
+}
+
 async function askUnsaved() {
     const dialog = el("confirm-dialog");
     if (!dialog || typeof dialog.showModal !== "function") {
@@ -1218,6 +1236,36 @@ function drawPlacement(ctx) {
     const placement = state.placement;
     if (!placement) return;
 
+    if (placement.kind === "arrow" || placement.kind === "text") {
+        const anchor = placement.start ?? placement.end;
+        if (!anchor) return;
+
+        const p = worldToScreen(anchor);
+        const angle = ((placement.angle ?? 90) * Math.PI) / 180;
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(angle);
+        ctx.fillStyle = "#dc2626";
+        ctx.beginPath();
+        ctx.moveTo(0, -6);
+        ctx.lineTo(6, 0);
+        ctx.lineTo(0, 6);
+        ctx.lineTo(-6, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.fillStyle = "#7f1d1d";
+        ctx.font = '700 10px "Segoe UI", sans-serif';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(placement.label, p.x + 10, p.y - 12);
+        ctx.restore();
+        return;
+    }
+
     if (placement.kind === "start" || placement.kind === "finish") {
         const anchor = placement.start ?? placement.end;
         if (!anchor) return;
@@ -1700,7 +1748,7 @@ function sCurveFromDrag(start, end, shift) {
 
 /// Prévia geométrica da forma em posicionamento (sem tocar no documento).
 function placementGeometry(kind, start, end, shift) {
-    if (kind === "start" || kind === "finish") {
+    if (kind === "start" || kind === "finish" || kind === "arrow" || kind === "text") {
         return { polylines: [], valid: true, distance: 0 };
     }
 
@@ -1710,6 +1758,12 @@ function placementGeometry(kind, start, end, shift) {
     }
 
     switch (kind) {
+        case "guide":
+            return {
+                polylines: [[[start.x, start.y], [end.x, end.y]]],
+                valid: distance >= 1,
+                distance,
+            };
         case "line":
             return {
                 polylines: [[[start.x, start.y], [end.x, end.y]]],
@@ -1808,11 +1862,16 @@ function startPlacement(kind, label, options = {}) {
     );
 }
 
-function cancelPlacement(message) {
-    if (!state.placement) return false;
+/// Encerra o modo de inserção sem alterar a mensagem de status.
+function finishPlacement() {
     state.placement = null;
     state.snap = null;
     el("canvas").classList.remove("placing");
+}
+
+function cancelPlacement(message) {
+    if (!state.placement) return false;
+    finishPlacement();
     draw();
     setStatus(message ?? "Inserção cancelada.");
     return true;
@@ -1829,14 +1888,48 @@ async function commitPlacement(placement) {
             angle: placement.angle ?? 90,
         });
 
-        state.placement = null;
-        state.snap = null;
-        el("canvas").classList.remove("placing");
+        finishPlacement();
         state.selection = null;
         state.cursor = { x: Math.round(start.x), y: Math.round(start.y) };
         await refreshDoc();
         setStatus(
             `${placement.label} definida em ${Math.round(start.x)}, ` +
+                `${Math.round(start.y)} mm.`
+        );
+        return;
+    }
+
+    if (kind === "arrow" || kind === "text") {
+        let text = "";
+        if (kind === "text") {
+            const answer = await askTextDialog("Texto da anotação", "Texto", "");
+            if (answer === null) {
+                finishPlacement();
+                setStatus("Inserção de texto cancelada.");
+                return;
+            }
+            text = answer;
+            if (!text) {
+                finishPlacement();
+                setStatus("Texto vazio — anotação não inserida.");
+                return;
+            }
+        }
+
+        await rpc("doc.addMarker", {
+            type: kind === "arrow" ? "direction_arrow" : "text",
+            x: start.x,
+            y: start.y,
+            angle: placement.angle ?? 90,
+            ...(text ? { text } : {}),
+        });
+
+        finishPlacement();
+        state.selection = null;
+        state.cursor = { x: Math.round(start.x), y: Math.round(start.y) };
+        await refreshDoc();
+        setStatus(
+            `${placement.label} inserido em ${Math.round(start.x)}, ` +
                 `${Math.round(start.y)} mm.`
         );
         return;
@@ -1850,6 +1943,22 @@ async function commitPlacement(placement) {
 
     let result;
     switch (kind) {
+        case "guide": {
+            await rpc("doc.addGuide", { a: [start.x, start.y], b: [end.x, end.y] });
+            if (state.doc?.layers?.guides !== true) {
+                await rpc("doc.setLayers", { guides: true });
+            }
+
+            finishPlacement();
+            state.selection = null;
+            state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
+            await refreshDoc();
+            setStatus(
+                `Guia inserida (${Math.round(geometry.distance)} mm) — ` +
+                    "camada Guias ativada."
+            );
+            return;
+        }
         case "line":
             result = await rpc("doc.addLine", {
                 a: [start.x, start.y],
@@ -1915,9 +2024,7 @@ async function commitPlacement(placement) {
         placement.endPort
     );
 
-    state.placement = null;
-    state.snap = null;
-    el("canvas").classList.remove("placing");
+    finishPlacement();
     state.selection = result.id;
     state.cursor = { x: Math.round(end.x), y: Math.round(end.y) };
     await refreshDoc();
@@ -1965,6 +2072,18 @@ function insertFinish() {
     startPlacement("finish", "Chegada", { single: true });
 }
 
+function insertArrow() {
+    startPlacement("arrow", "Seta", { single: true });
+}
+
+function insertTextMarker() {
+    startPlacement("text", "Texto", { single: true });
+}
+
+function insertGuide() {
+    startPlacement("guide", "Guia");
+}
+
 async function clearStartFinish() {
     const result = await rpc("doc.clearStartFinish", {});
     await refreshDoc();
@@ -1972,6 +2091,18 @@ async function clearStartFinish() {
         result.removed > 0
             ? `Marcas de circuito removidas (${result.removed}).`
             : "Nenhuma marca de circuito para remover."
+    );
+}
+
+async function clearAnnotations() {
+    const result = await rpc("doc.clearAnnotations", {});
+    await refreshDoc();
+    const total = (result.markers ?? 0) + (result.guides ?? 0);
+    setStatus(
+        total > 0
+            ? `Anotações removidas: ${result.markers} marcador(es), ` +
+                  `${result.guides} guia(s).`
+            : "Nenhuma anotação para remover."
     );
 }
 /* ------------------------------------------------------------------- tools */
@@ -3185,6 +3316,14 @@ async function runAction(action) {
             return insertFinish();
         case "clear-start-finish":
             return clearStartFinish();
+        case "insert-arrow":
+            return insertArrow();
+        case "insert-text":
+            return insertTextMarker();
+        case "insert-guide":
+            return insertGuide();
+        case "clear-annotations":
+            return clearAnnotations();
         case "undo":
             return undo();
         case "redo":
